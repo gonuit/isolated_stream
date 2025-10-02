@@ -64,7 +64,7 @@ class _IsolateWrapper<T, E> {
     return result;
   }
 
-  Future<void> kill() async {
+  void kill() {
     // Close outstanding replies
     for (final r in _openReplies) {
       r.close();

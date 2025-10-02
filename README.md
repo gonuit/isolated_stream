@@ -22,7 +22,7 @@ This package is perfect for:
 1. **Install this package.**
    ```yaml
    dependencies:
-     isolated_stream: ^1.0.0
+     isolated_stream: ^2.0.0
    ```
 
 2. **Import it in your Dart file.**
@@ -73,21 +73,27 @@ await for (final value in transformed) {
 }
 ```
 
-## ⚡ Concurrent processing
+## ⚡ Processing strategies
 
-Process multiple elements simultaneously while maintaining order:
+Choose the right strategy for your use case:
 
 ```dart
 final stream = Stream.fromIterable([1, 2, 3, 4, 5, 6, 7, 8]);
 
-// Process up to 3 elements concurrently - can be faster than sequential
-final transformed = stream.isolatedMap(
-  CpuIntensiveHandler(), 
-  concurrency: 3,
-);
+// Sequential: process one at a time (default)
+stream.isolatedMap(handler); // or .sequential()
 
-// Order is still preserved: 1, 2, 3, 4, 5, 6, 7, 8
-final results = await transformed.toList();
+// Concurrent: process multiple simultaneously, preserving order
+stream.isolatedMap(handler, 
+  strategy: IsolatedProcessingStrategy.concurrent(concurrency: 3));
+
+// Droppable: drop new events when at max concurrency
+stream.isolatedMap(handler,
+  strategy: IsolatedProcessingStrategy.droppable(concurrency: 2));
+
+// Restartable: cancel previous work when new events arrive
+stream.isolatedMap(handler,
+  strategy: IsolatedProcessingStrategy.restartable());
 ```
 
 ## 🎱 Isolate pooling
@@ -100,8 +106,10 @@ final bigStream = Stream.fromIterable(List.generate(1000, (i) => i));
 // Use multiple isolates for high-throughput processing
 final processed = bigStream.isolatedMap(
   HeavyComputationHandler(),
-  concurrency: 8,  // 8 total concurrent operations across all isolates
-  isolates: 4,     // Work distributed among 4 isolates (~2 operations each) 💪
+  strategy: IsolatedProcessingStrategy.concurrent(
+    concurrency: 8,  // 8 total concurrent operations
+    isolates: 4,     // Work distributed among 4 isolates 💪
+  ),
 );
 
 // Scales beautifully with available CPU cores!
@@ -130,7 +138,7 @@ final apis = Stream.fromIterable([
 
 final responses = apis.isolatedMap(
   HeavyApiDataParser(),
-  concurrency: 3, // All requests in parallel! 
+  strategy: IsolatedProcessingStrategy.concurrent(concurrency: 3),
 );
 ```
 
@@ -154,7 +162,7 @@ Data must be sendable through Dart's `SendPort` mechanism for inter-isolate comm
 - Classes marked with `@pragma('vm:isolate-unsendable')`
 
 **⚠️ Closures limitation:**
-Functions and closures may capture more state than needed due to VM implementation, potentially causing larger object graphs than expected ([dartbug.com/36983](http://dartbug.com/36983)).
+Functions and closures may capture more state than needed due to VM implementation, potentially causing larger object graphs than expected ([https://github.com/dart-lang/sdk/issues/36983](https://github.com/dart-lang/sdk/issues/36983)).
 
 ### ℹ️ Performance tips
 - **Use for CPU-heavy work**: There's communication overhead, so only use for intensive computations
@@ -176,15 +184,18 @@ class MyHandler extends IsolatedHandler<InputType, OutputType> {
 ```dart
 stream.isolatedMap(
   handler,           // Your IsolatedHandler instance
-  concurrency: 4,    // How many operations to run in parallel
-  isolates: 2,       // How many isolates to distribute work across
+  strategy: IsolatedProcessingStrategy.concurrent(
+    concurrency: 4,  // How many operations to run in parallel
+    isolates: 2,     // How many isolates to distribute work across
+  ),
 )
 ```
 
-### Parameters
-- **`handler`**: Your transformation logic (extends `IsolatedHandler`)
-- **`concurrency`**: Max concurrent operations *(default: 1)*
-- **`isolates`**: Number of isolates to use *(default: 1)*
+### Strategies
+- **`sequential()`**: Process one at a time *(default)*
+- **`concurrent(concurrency, isolates)`**: Process multiple simultaneously
+- **`droppable(concurrency, isolates)`**: Drop events when busy
+- **`restartable(concurrency, isolates)`**: Cancel previous work for new events
 
 **Returns**: `Stream<E>` with transformed elements in original order
 

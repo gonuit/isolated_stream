@@ -4,181 +4,266 @@ import 'package:isolated_stream/isolated_stream.dart';
 import 'test_handlers.dart';
 
 void main() {
-  group('concurrent processing', () {
-    test('concurrent processing reduces total time', () async {
-      final numbers = [1, 2, 3, 4, 5, 6];
-      final handler = AsyncMultiplyHandler(2, delay: const Duration(milliseconds: 30));
-      
-      // Test sequential processing time
-      final sequential = Stopwatch()..start();
-      final sequentialResults = await Stream.fromIterable(numbers)
-          .isolatedMap(handler, concurrency: 1)
-          .toList();
-      sequential.stop();
-      
-      // Test concurrent processing time  
-      final concurrent = Stopwatch()..start();
-      final concurrentResults = await Stream.fromIterable(numbers)
-          .isolatedMap(handler, concurrency: 3)
-          .toList();
-      concurrent.stop();
-      
-      expect(sequentialResults, equals([2, 4, 6, 8, 10, 12]));
-      expect(concurrentResults, equals([2, 4, 6, 8, 10, 12]));
-      
-      // Concurrent should be faster, but allow for system variations
-      expect(concurrent.elapsedMilliseconds, lessThan(sequential.elapsedMilliseconds));
+  group('ConcurrentProcessingStrategy', () {
+    final handler = ValueHandler();
+
+    test('emit all events with concurrency 1 - process one at a time',
+        () async {
+      final results = <int>[];
+      final s = Stopwatch()..start();
+      final subscription = Stream.fromIterable([
+        TestHandlerEvent(value: 1, delayMs: 50),
+        TestHandlerEvent(value: 2, delayMs: 50),
+        TestHandlerEvent(value: 3, delayMs: 50),
+      ])
+          .isolatedMap(
+            handler,
+            strategy: IsolatedProcessingStrategy.concurrent(concurrency: 1),
+          )
+          .listen(results.add);
+
+      await subscription.asFuture();
+      s.stop();
+      expect(s.elapsedMilliseconds, greaterThanOrEqualTo(150));
+
+      // Preserve order
+      expect(results, equals([1, 2, 3]));
+    });
+    test('emit all events with concurrency 3 - process three at a time',
+        () async {
+      final results = <int>[];
+      final s = Stopwatch()..start();
+      final subscription = Stream.fromIterable([
+        TestHandlerEvent(value: 1, delayMs: 50),
+        TestHandlerEvent(value: 2, delayMs: 50),
+        TestHandlerEvent(value: 3, delayMs: 50),
+      ])
+          .isolatedMap(
+            handler,
+            strategy: IsolatedProcessingStrategy.concurrent(concurrency: 3),
+          )
+          .listen(results.add);
+
+      await subscription.asFuture();
+      s.stop();
+      expect(s.elapsedMilliseconds, lessThan(100));
+
+      // Preserve order
+      expect(results, equals([1, 2, 3]));
     });
 
-    test('order preserved despite variable processing times', () async {
-      final handler = VariableDelayHandler();
-      final numbers = [5, 1, 3, 2, 4]; // Mixed order input
-      
-      final results = await Stream.fromIterable(numbers)
-          .isolatedMap(handler, concurrency: 5)
-          .toList();
-      
-      // Output maintains input order regardless of completion time
-      expect(results, equals([10, 2, 6, 4, 8]));
+    test(
+        'emit all events with concurrency 1 - process one at a time with varying delays',
+        () async {
+      final results = <int>[];
+      final s = Stopwatch()..start();
+      final subscription = Stream.fromIterable([
+        TestHandlerEvent(value: 1, delayMs: 50),
+        TestHandlerEvent(value: 2, delayMs: 25),
+        TestHandlerEvent(value: 3, delayMs: 0),
+      ])
+          .isolatedMap(
+            handler,
+            strategy: IsolatedProcessingStrategy.concurrent(concurrency: 1),
+          )
+          .listen(results.add);
+
+      await subscription.asFuture();
+      s.stop();
+      expect(s.elapsedMilliseconds, greaterThanOrEqualTo(50));
+
+      // Preserve order
+      expect(results, equals([1, 2, 3]));
     });
 
-    test('backpressure prevents overwhelming downstream', () async {
-      final controller = StreamController<int>();
-      final handler = AsyncMultiplyHandler(1, delay: const Duration(milliseconds: 50));
-      
-      final transformed = controller.stream.isolatedMap(handler, concurrency: 2);
-      final future = transformed.take(4).toList();
-      
-      // Rapidly add more items than concurrency allows
-      for (int i = 1; i <= 6; i++) {
-        controller.add(i);
-      }
-      
-      final results = await future;
-      expect(results, equals([1, 2, 3, 4]));
-      
-      await controller.close();
+    test(
+        'emit all events with concurrency 3 - process three at a time with varying delays',
+        () async {
+      final results = <int>[];
+      final s = Stopwatch()..start();
+      final subscription = Stream.fromIterable([
+        TestHandlerEvent(value: 1, delayMs: 50),
+        TestHandlerEvent(value: 2, delayMs: 25),
+        TestHandlerEvent(value: 3, delayMs: 0),
+      ])
+          .isolatedMap(
+            handler,
+            strategy: IsolatedProcessingStrategy.concurrent(concurrency: 3),
+          )
+          .listen(results.add);
+
+      await subscription.asFuture();
+      s.stop();
+      expect(s.elapsedMilliseconds, greaterThanOrEqualTo(50));
+
+      // Preserve order
+      expect(results, equals([1, 2, 3]));
     });
 
-    test('high concurrency handles many items efficiently', () async {
-      final items = List.generate(30, (i) => i + 1);
-      
-      final results = await Stream.fromIterable(items)
-          .isolatedMap(AsyncMultiplyHandler(2, delay: const Duration(milliseconds: 5)), 
-                      concurrency: 15)
-          .toList();
-      
-      expect(results, hasLength(30));
-      expect(results.first, equals(2));
-      expect(results.last, equals(60));
+    test('process all events when not overlapping', () async {
+      final results = <int>[];
+      final controller = StreamController<TestHandlerEvent>();
+
+      final subscription = controller.stream
+          .isolatedMap(handler,
+              strategy: IsolatedProcessingStrategy.concurrent(concurrency: 1))
+          .listen(results.add);
+
+      controller.add(TestHandlerEvent(value: 1, delayMs: 0));
+      await Future.delayed(Duration(milliseconds: 10));
+      controller.add(TestHandlerEvent(value: 2, delayMs: 0));
+      await Future.delayed(Duration(milliseconds: 10));
+      controller
+        ..add(TestHandlerEvent(value: 3, delayMs: 0))
+        ..close();
+
+      await subscription.asFuture();
+
+      // Should get all the results
+      expect(results, equals([1, 2, 3]));
+      expect(results, hasLength(3));
     });
 
-    test('errors during concurrent processing are propagated', () async {
-      final handler = AsyncErrorHandler('Processing failed');
-      
-      final future = Stream.fromIterable([1, 2, 3])
-          .isolatedMap(handler, concurrency: 2)
-          .toList();
-      
-      await expectLater(
-        future,
-        throwsA(isA<Exception>().having(
-          (e) => e.toString(), 
-          'message', 
-          contains('Processing failed'),
-        )),
+    test('handles rapid event stream correctly', () async {
+      final results = <int>[];
+      final subscription = Stream.fromIterable(
+        List.generate(
+          10,
+          (i) => TestHandlerEvent(value: i + 1, delayMs: 20 - i * 2),
+        ),
+      )
+          .isolatedMap(
+            handler,
+            strategy: IsolatedProcessingStrategy.concurrent(
+                concurrency: 3, isolates: 2),
+          )
+          .listen(results.add);
+
+      await subscription.asFuture();
+
+      // Emit all events and preserve order
+      expect(results, equals([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+      expect(results.length, equals(10));
+    });
+
+    test('emits intermediate results when events are spaced apart', () async {
+      final results = <int>[];
+      final controller = StreamController<TestHandlerEvent>();
+      final subscription = controller.stream
+          .isolatedMap(handler,
+              strategy: IsolatedProcessingStrategy.concurrent(concurrency: 1))
+          .listen(results.add);
+
+      // Send events with enough delay for processing to complete
+      controller.add(TestHandlerEvent(value: 1, delayMs: 30));
+      await Future.delayed(Duration(milliseconds: 50));
+      expect(results, equals([1]));
+
+      controller.add(TestHandlerEvent(value: 2, delayMs: 30));
+      await Future.delayed(Duration(milliseconds: 50));
+      expect(results, equals([1, 2]));
+
+      controller.add(TestHandlerEvent(value: 3, delayMs: 30));
+      controller.close();
+      await subscription.asFuture();
+
+      expect(results, equals([1, 2, 3]));
+    });
+
+    test('handles errors from active events', () async {
+      final results = <int>[];
+      final errors = <dynamic>[];
+      final controller = StreamController<TestHandlerEvent>();
+
+      final subscription = controller.stream
+          .isolatedMap(
+        handler,
+        strategy: IsolatedProcessingStrategy.concurrent(concurrency: 2),
+      )
+          .listen(
+        cancelOnError: false,
+        (value) {
+          results.add(value);
+        },
+        onError: (error, st) {
+          print('error: $error');
+          errors.add(error);
+        },
+      );
+
+      // Should be kept
+      controller.add(TestHandlerEvent(value: 1, delayMs: 30));
+      // Should be kept and error (concurrency=2 keeps last 2)
+      controller.add(TestHandlerEvent(
+        value: 2,
+        delayMs: 30,
+        exception: 'Error on value: 2',
+      ));
+      // Should be dropped
+      controller.add(TestHandlerEvent(value: 3, delayMs: 30));
+      // Should be dropped (error are also dropped)
+      controller.add(TestHandlerEvent(
+        value: 4,
+        delayMs: 30,
+        exception: 'Error on value: 4',
+      ));
+
+      controller.close();
+
+      final completer = Completer<void>();
+      subscription.onDone(() {
+        completer.complete();
+      });
+      await completer.future;
+
+      expect(results, equals([1, 3]));
+      expect(errors.first.toString(), contains('Error on value: 2'));
+      expect(errors.last.toString(), contains('Error on value: 4'));
+      expect(errors, hasLength(2));
+    });
+
+    test('validates concurrency parameter', () {
+      expect(
+        () => IsolatedProcessingStrategy.concurrent(concurrency: 0),
+        throwsA(isA<ArgumentError>()),
+      );
+
+      expect(
+        () => IsolatedProcessingStrategy.concurrent(concurrency: -1),
+        throwsA(isA<ArgumentError>()),
       );
     });
 
-    test('stream completion during processing works correctly', () async {
-      final controller = StreamController<int>();
-      final handler = AsyncMultiplyHandler(2, delay: const Duration(milliseconds: 40));
-      
-      final future = controller.stream
-          .isolatedMap(handler, concurrency: 2)
-          .toList();
-      
-      // Add data then close immediately 
-      controller.add(1);
-      controller.add(2);
-      controller.add(3);
-      await controller.close();
-      
-      final results = await future;
-      expect(results, equals([2, 4, 6]));
-    });
-  });
+    test('validates isolates parameter', () {
+      expect(
+        () => IsolatedProcessingStrategy.concurrent(isolates: 0),
+        throwsA(isA<ArgumentError>()),
+      );
 
-  group('resource management', () {
-    test('supports multiple simultaneous operations', () async {
-      final sourceData = [1, 2, 3, 4, 5];
-      
-      final doubleOperation = Stream.fromIterable(sourceData)
-          .isolatedMap(MultiplyHandler(2))
-          .toList();
-      
-      final tripleOperation = Stream.fromIterable(sourceData)
-          .isolatedMap(MultiplyHandler(3))
-          .toList();
-      
-      final results = await Future.wait([doubleOperation, tripleOperation]);
-      
-      expect(results[0], equals([2, 4, 6, 8, 10]));
-      expect(results[1], equals([3, 6, 9, 12, 15]));
+      expect(
+        () => IsolatedProcessingStrategy.concurrent(isolates: -1),
+        throwsA(isA<ArgumentError>()),
+      );
     });
 
-    test('subscription cancellation stops processing correctly', () async {
-      final controller = StreamController<int>();
-      final handler = AsyncMultiplyHandler(2, delay: const Duration(milliseconds: 50));
-      
+    test('stream cancellation cleans up resources', () async {
       final results = <int>[];
-      late StreamSubscription subscription;
-      
-      subscription = controller.stream
-          .isolatedMap(handler, concurrency: 2)
-          .listen((value) {
-            results.add(value);
-            if (results.length == 2) {
-              subscription.cancel();
-            }
-          });
-      
-      // Add more data than we want to process
-      for (int i = 1; i <= 6; i++) {
-        controller.add(i);
-      }
-      
-      await Future.delayed(const Duration(milliseconds: 150));
-      
-      expect(results, hasLength(2));
-      expect(results, equals([2, 4]));
-      
-      await controller.close();
-    });
-  });
+      final subscription = Stream.fromIterable([
+        TestHandlerEvent(value: 1, delayMs: 30),
+        TestHandlerEvent(value: 2, delayMs: 30),
+        TestHandlerEvent(value: 3, delayMs: 30),
+      ])
+          .isolatedMap(handler,
+              strategy: IsolatedProcessingStrategy.concurrent(
+                  concurrency: 2, isolates: 3))
+          .listen(results.add);
 
-  group('Performance Comparison', () {
-    test('concurrency improves processing time for async work', () async {
-      final numbers = List.generate(8, (i) => i + 1);
-      final handler = AsyncMultiplyHandler(2, delay: const Duration(milliseconds: 25));
-      
-      // Measure sequential processing
-      final sequentialTimer = Stopwatch()..start();
-      final sequentialResults = await Stream.fromIterable(numbers)
-          .isolatedMap(handler, concurrency: 1)
-          .toList();
-      sequentialTimer.stop();
-      
-      // Measure concurrent processing
-      final concurrentTimer = Stopwatch()..start();
-      final concurrentResults = await Stream.fromIterable(numbers)
-          .isolatedMap(handler, concurrency: 4)
-          .toList();
-      concurrentTimer.stop();
-      
-      expect(sequentialResults, equals(concurrentResults));
-      expect(concurrentTimer.elapsedMilliseconds, 
-             lessThan(sequentialTimer.elapsedMilliseconds));
+      // Cancel before completion
+      // Should handle cancellation gracefully without hanging
+      await subscription.cancel();
+
+      // No results due to early cancellation
+      expect(results, isEmpty);
     });
   });
 }
