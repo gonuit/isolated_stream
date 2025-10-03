@@ -1,3 +1,5 @@
+## 2.0.1
+- Updated documentation
 ## 2.0.0
 
 - **BREAKING CHANGE**: Replaced `concurrency`, and `isolates` parameters with strategy-based API

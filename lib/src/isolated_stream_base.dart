@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:isolate';
 
-import 'package:meta/meta.dart';
-
 part 'messages.dart';
 part 'isolate_entry.dart';
 part 'isolate_wrapper.dart';
@@ -15,22 +13,7 @@ extension IsolatedStreamExtension<T> on Stream<T> {
   /// Transforms each element using the provided [handler] in a separate isolate.
   ///
   /// This method is useful for CPU-intensive transformations that would otherwise
-  /// block the main isolate. By default, elements are processed sequentially to
-  /// maintain order and prevent resource exhaustion.
-  ///
-  /// Set [concurrency] to allow multiple elements to be processed simultaneously
-  /// while still preserving the output order. Higher concurrency can improve
-  /// throughput but uses more resources.
-  ///
-  /// Set [isolates] to use multiple isolates for distributing work. This can
-  /// improve performance for high-throughput scenarios by reusing isolates
-  /// and distributing work across multiple isolate instances.
-  ///
-  /// The [mode] parameter controls how concurrent processing behaves:
-  /// - [IsolatedConcurrency.concurrent]: Standard concurrent processing (default)
-  /// - [IsolatedConcurrency.sequential]: Process elements one at a time in order
-  /// - [IsolatedConcurrency.droppable]: Drop new events when at max concurrency
-  /// - [IsolatedConcurrency.restartable]: Cancel previous operations when new events arrive
+  /// block the main isolate. By default, elements are processed sequentially.
   ///
   /// The [handler] defines the transformation logic and must be serializable.
   ///
@@ -47,8 +30,6 @@ extension IsolatedStreamExtension<T> on Stream<T> {
   /// }
   /// ```
   ///
-  /// Throws [StateError] if the isolate fails to initialize.
-  ///
   /// Examples:
   /// ```dart
   /// // Sequential processing (default)
@@ -56,11 +37,11 @@ extension IsolatedStreamExtension<T> on Stream<T> {
   ///
   /// // Concurrent processing with 3 concurrent tasks
   /// stream.isolatedMap(handler,
-  ///   strategy: IsolatedProcessingStrategy.concurrent(3, 1));
+  ///   strategy: IsolatedProcessingStrategy.concurrent(concurrency: 3));
   ///
   /// // Droppable processing that drops events when busy
   /// stream.isolatedMap(handler,
-  ///   strategy: IsolatedProcessingStrategy.droppable(2, 1));
+  ///   strategy: IsolatedProcessingStrategy.droppable(concurrency: 2));
   /// ```
   Stream<E> isolatedMap<E>(
     IsolatedHandler<T, E> handler, {
