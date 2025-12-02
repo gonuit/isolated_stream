@@ -30,7 +30,9 @@ class _IsolatePool<T, E> {
   }
 
   void dispose() {
-    _pool.map((wrapper) => wrapper.kill());
+    for (var wrapper in _pool) {
+      wrapper.kill();
+    }
     _pool.clear();
   }
 }

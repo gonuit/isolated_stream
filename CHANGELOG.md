@@ -1,3 +1,5 @@
+## 2.0.2
+- Fixed a memory leak during multiple stream reinitialisations.
 ## 2.0.1
 - Updated documentation
 ## 2.0.0
