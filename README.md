@@ -1,20 +1,23 @@
 # isolated_stream
 
-Make isolates as simple as streams. Transform data in separate isolates with the same ease as regular stream operations - no complex setup.
+Make isolates as simple as streams — *or as simple as a function call*. Offload CPU-heavy work to background isolates with either a stream API or a long-lived request/response worker.
 
 
 ## Features 🎯
 
 - 🔄 **Non-blocking processing** - Transform streams in separate isolates
-- ⚡ **Configurable concurrency** - Process multiple elements while preserving order  
+- 📞 **Request/response API** - `IsolatedWorker` for awaiting individual calls on long-lived isolates
+- ⚡ **Configurable concurrency** - Cap in-flight work with a single parameter
 - 🎱 **Isolate pooling** - Distribute work across multiple isolates
+- 💤 **Idle offloading** - Automatically release isolates after inactivity and transparently re-spawn on demand
 - 🎮 **Simple API** - Easy-to-use extension method on streams
 
 ## When to use 🤔
 
 This package is perfect for:
 - CPU-intensive computations on stream data (image processing, mathematical calculations, parsing)
-- Preventing UI freezes in Flutter apps during heavy processing  
+- Background workers that handle repeated ad-hoc requests (parsers, encoders, solvers)
+- Preventing UI freezes in Flutter apps during heavy processing
 - Maintaining responsiveness while processing large datasets
 
 ## Quick start 🚀
@@ -22,7 +25,7 @@ This package is perfect for:
 1. **Install this package.**
    ```yaml
    dependencies:
-     isolated_stream: ^2.0.0
+     isolated_stream: ^2.1.0-dev.1
    ```
 
 2. **Import it in your Dart file.**
@@ -116,6 +119,62 @@ final processed = bigStream.isolatedMap(
 print('Processed ${await processed.length} items lightning fast! ⚡');
 ```
 
+## 📞 Request/response with `IsolatedWorker`
+
+When you don't have a stream of data — just individual values you want to process on demand — use `IsolatedWorker`. It keeps isolates alive across calls and returns a `Future<E>` for each `compute(value)`.
+
+```dart
+class ParseJsonHandler extends IsolatedHandler<String, Map<String, dynamic>> {
+  @override
+  Map<String, dynamic> compute(String raw) => json.decode(raw);
+}
+
+final worker = IsolatedWorker<String, Map<String, dynamic>>(
+  ParseJsonHandler(),
+  isolates: 2,        // optional: spread calls across 2 isolates
+  concurrency: 4,     // optional: cap in-flight calls to 4 (queue the rest)
+);
+
+// Call it like a function, as many times as you like.
+final a = await worker.compute('{"hello": "world"}');
+final b = await worker.compute('[1, 2, 3]');
+
+// Many calls in parallel — bounded by `concurrency`.
+final results = await Future.wait([
+  for (final raw in payloads) worker.compute(raw),
+]);
+
+worker.dispose(); // kill isolates when done
+```
+
+### Concurrency modes
+
+- `concurrency: null` *(default)* — unbounded; calls run in parallel, distributed round-robin across the isolate pool.
+- `concurrency: 1` — serialized (FIFO); one call at a time.
+- `concurrency: N` — at most N calls in flight; extras queue until a slot frees.
+
+## 💤 Idle offloading
+
+Both `IsolatedWorker` and every `IsolatedProcessingStrategy` accept an `idleTimeout`. If no work has been in flight for that long, the pool releases its isolates; the next call transparently re-spawns them. Handy for workers that might sit idle for a long time.
+
+```dart
+// Request/response worker that naps when unused
+final worker = IsolatedWorker<int, int>(
+  MultiplyHandler(10),
+  idleTimeout: const Duration(minutes: 1),
+  onIdleShutdown: () => print('isolates released'),
+);
+
+// Stream strategy with idle offloading
+stream.isolatedMap(
+  handler,
+  strategy: IsolatedProcessingStrategy.concurrent(
+    concurrency: 3,
+    idleTimeout: const Duration(seconds: 30),
+  ),
+);
+```
+
 ## 🌐 Async operations
 
 Async operations work seamlessly:
@@ -180,24 +239,43 @@ class MyHandler extends IsolatedHandler<InputType, OutputType> {
 }
 ```
 
-### Using isolatedMap
+### Stream API — `isolatedMap`
 ```dart
 stream.isolatedMap(
   handler,           // Your IsolatedHandler instance
   strategy: IsolatedProcessingStrategy.concurrent(
     concurrency: 4,  // How many operations to run in parallel
     isolates: 2,     // How many isolates to distribute work across
+    idleTimeout: const Duration(minutes: 1), // optional
   ),
 )
 ```
 
-### Strategies
-- **`sequential()`**: Process one at a time *(default)*
-- **`concurrent(concurrency, isolates)`**: Process multiple simultaneously
-- **`droppable(concurrency, isolates)`**: Drop events when busy
-- **`restartable(concurrency, isolates)`**: Cancel previous work for new events
+**Strategies:**
+- **`sequential()`** — Process one at a time *(default)*
+- **`concurrent(concurrency, isolates)`** — Process multiple simultaneously, preserving input order
+- **`droppable(concurrency, isolates)`** — Drop events when busy
+- **`restartable(concurrency, isolates)`** — Cancel previous work for new events
 
-**Returns**: `Stream<E>` with transformed elements in original order
+All four accept optional `idleTimeout` and `onIdleShutdown`.
+
+**Returns**: `Stream<E>` with transformed elements in input order.
+
+### Request/response API — `IsolatedWorker`
+```dart
+final worker = IsolatedWorker<T, E>(
+  handler,            // Your IsolatedHandler instance
+  isolates: 1,        // How many background isolates
+  concurrency: null,  // null = unbounded; 1 = sequential; N = bounded
+  idleTimeout: null,  // optional: release isolates after inactivity
+  onIdleShutdown: null,
+);
+
+final result = await worker.compute(value); // Future<E>
+worker.dispose();
+```
+
+**When to pick which:** use `isolatedMap` when you already have a `Stream<T>` to transform; use `IsolatedWorker` when you have individual values to process on demand and want a long-lived worker you can call like a function.
 
 ## 📄 License
 
