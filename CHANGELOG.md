@@ -1,3 +1,13 @@
+## 2.1.0-dev.1
+- Added `IsolatedWorker<T, E>`: long-lived request/response API with `compute(value) -> Future<E>`.
+- Added `concurrency: int?` on `IsolatedWorker` — `null` is unbounded, `1` serializes calls, `N` caps in-flight at N and queues the rest.
+- Added `idleTimeout` + `onIdleShutdown` on `IsolatedWorker` and all `IsolatedProcessingStrategy` factories — workers release their isolates after inactivity and transparently re-spawn on the next call.
+- Changed: sequential and concurrent scheduling is now centralized in an internal `_WorkPolicy` primitive shared by `IsolatedWorker` and the stream strategies (no behavior change).
+- Fixed: in-flight `compute()` no longer hangs on `dispose()` — it now completes with a `StateError`.
+- Fixed: `dispose()` racing an in-progress isolate spawn no longer leaks isolates or hangs.
+- Fixed: `Droppable`/`Restartable` strategies could leave the output stream open forever if the source closed after all events had completed.
+- Changed: `IsolatedWorker` throws `ArgumentError` (not `AssertionError`) for `isolates < 1`.
+
 ## 2.0.2
 - Fixed a memory leak during multiple stream reinitialisations.
 ## 2.0.1

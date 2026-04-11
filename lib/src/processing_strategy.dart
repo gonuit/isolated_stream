@@ -33,8 +33,17 @@ abstract interface class IsolatedProcessingStrategy {
   ///
   /// This is the default and safest strategy. Elements are processed one by one
   /// in the order they arrive, ensuring no race conditions and minimal memory usage.
-  const factory IsolatedProcessingStrategy.sequential() =
-      SequentialProcessingStrategy;
+  ///
+  /// **Parameters:**
+  /// - [idleTimeout]: If set, the underlying isolate is released after this
+  ///   duration elapses with no in-flight work, and transparently re-spawned
+  ///   when the next event arrives.
+  /// - [onIdleShutdown]: Optional callback invoked after each idle shutdown.
+  ///   Not called on explicit disposal.
+  const factory IsolatedProcessingStrategy.sequential({
+    Duration? idleTimeout,
+    void Function()? onIdleShutdown,
+  }) = SequentialProcessingStrategy;
 
   /// Creates a restartable processing strategy that cancels previous operations
   /// when new events arrive.
@@ -48,12 +57,20 @@ abstract interface class IsolatedProcessingStrategy {
   /// **Parameters:**
   /// - [concurrency]: Maximum number of operations to process simultaneously (default: 1).
   /// - [isolates]: Number of isolates in the pool for load distribution (default: 1)
+  /// - [idleTimeout]: If set, the isolate pool is released after this duration
+  ///   elapses with no in-flight work, and transparently re-spawned on the
+  ///   next event.
+  /// - [onIdleShutdown]: Optional callback invoked after each idle shutdown.
   ///
   /// When [concurrency] is set to 2 and 4 events arrive, only the 2 most recent events will be processed.
   /// When [concurrency] is set to 2, and 2 events are already being processed, the new event will
   /// replace/cancel the oldest pending event/computation.
-  factory IsolatedProcessingStrategy.restartable(
-      {int concurrency, int isolates}) = RestartableProcessingStrategy;
+  factory IsolatedProcessingStrategy.restartable({
+    int concurrency,
+    int isolates,
+    Duration? idleTimeout,
+    void Function()? onIdleShutdown,
+  }) = RestartableProcessingStrategy;
 
   /// Creates a droppable processing strategy that drops new events when at
   /// maximum concurrency.
@@ -65,6 +82,10 @@ abstract interface class IsolatedProcessingStrategy {
   /// **Parameters:**
   /// - [concurrency]: Maximum number of operations to process simultaneously (default: 1)
   /// - [isolates]: Number of isolates in the pool for load distribution (default: 1)
+  /// - [idleTimeout]: If set, the isolate pool is released after this duration
+  ///   elapses with no in-flight work, and transparently re-spawned on the
+  ///   next event.
+  /// - [onIdleShutdown]: Optional callback invoked after each idle shutdown.
   ///
   /// When [concurrency] is set to 2 and 4 events arrive, only the 2 first events will be processed,
   /// the other 2 events will be dropped.
@@ -72,8 +93,12 @@ abstract interface class IsolatedProcessingStrategy {
   /// be dropped.
   ///
   /// All events will be returned in the order they arrived - applies also for errors.
-  factory IsolatedProcessingStrategy.droppable(
-      {int concurrency, int isolates}) = DroppableProcessingStrategy;
+  factory IsolatedProcessingStrategy.droppable({
+    int concurrency,
+    int isolates,
+    Duration? idleTimeout,
+    void Function()? onIdleShutdown,
+  }) = DroppableProcessingStrategy;
 
   /// Creates a concurrent processing strategy that processes multiple elements
   /// simultaneously while preserving output order.
@@ -85,13 +110,21 @@ abstract interface class IsolatedProcessingStrategy {
   /// **Parameters:**
   /// - [concurrency]: Maximum number of operations to process simultaneously (default: 1)
   /// - [isolates]: Number of isolates in the pool for load distribution (default: 1)
+  /// - [idleTimeout]: If set, the isolate pool is released after this duration
+  ///   elapses with no in-flight work, and transparently re-spawned on the
+  ///   next event.
+  /// - [onIdleShutdown]: Optional callback invoked after each idle shutdown.
   ///
   /// When [concurrency] is set to 3 and 6 events arrive, up to 3 events will be processed
   /// simultaneously. Other events will be queued until an active operation completes.
   ///
   /// All events will be returned in the order they arrived - applies also for errors.
-  factory IsolatedProcessingStrategy.concurrent(
-      {int concurrency, int isolates}) = ConcurrentProcessingStrategy;
+  factory IsolatedProcessingStrategy.concurrent({
+    int concurrency,
+    int isolates,
+    Duration? idleTimeout,
+    void Function()? onIdleShutdown,
+  }) = ConcurrentProcessingStrategy;
 
   /// Processes elements from the source stream using the specified handler.
   ///
@@ -225,10 +258,21 @@ class _EventResult<S, R> {
 /// // Output: processed in order 1, 2, 3, 4, 5
 /// ```
 class SequentialProcessingStrategy implements IsolatedProcessingStrategy {
+  /// If set, the underlying isolate is released after this duration elapses
+  /// with no in-flight work, and transparently re-spawned on the next event.
+  final Duration? idleTimeout;
+
+  /// Optional callback invoked after each idle shutdown. Not called on
+  /// explicit disposal.
+  final void Function()? onIdleShutdown;
+
   /// Creates a new sequential processing strategy.
   ///
   /// This strategy uses a single isolate and processes elements one at a time.
-  const SequentialProcessingStrategy();
+  const SequentialProcessingStrategy({
+    this.idleTimeout,
+    this.onIdleShutdown,
+  });
 
   @override
   void process<T, E>(
@@ -236,38 +280,32 @@ class SequentialProcessingStrategy implements IsolatedProcessingStrategy {
     IsolatedHandler<T, E> handler,
     Stream<T> source,
   ) {
-    final isolateWrapper = _IsolateWrapper<T, E>(handler);
+    final pool = _IsolatePool<T, E>(
+      handler,
+      1,
+      idleTimeout: idleTimeout,
+      onIdleShutdown: onIdleShutdown,
+    );
+    final policy = _SequentialPolicy<T, E>(pool.run);
     final subscription = source.listen(
       null,
       onError: controller.addError,
       onDone: controller.close,
     );
 
-    FutureOr<void> add(E value) {
-      controller.add(value);
-    }
-
     final addError = controller.addError;
     final resume = subscription.resume;
 
     subscription.onData((event) {
-      FutureOr<E> newValue;
-      try {
-        newValue = isolateWrapper.compute(event);
-      } catch (e, st) {
-        controller.addError(e, st);
-        return;
-      }
-      if (newValue is Future<E>) {
-        subscription.pause();
-        newValue.then(add, onError: addError).whenComplete(resume);
-      } else {
-        controller.add(newValue);
-      }
+      subscription.pause();
+      policy
+          .submit(event)
+          .then(controller.add, onError: addError)
+          .whenComplete(resume);
     });
 
     controller.onCancel = () {
-      subscription.cancel().whenComplete(isolateWrapper.kill);
+      subscription.cancel().whenComplete(pool.dispose);
     };
 
     if (!source.isBroadcast) {
@@ -374,9 +412,20 @@ class DroppableProcessingStrategy implements IsolatedProcessingStrategy {
   ///   isolates: 2,
   /// );
   /// ```
+  /// If set, the underlying isolate pool is released after this duration
+  /// elapses with no in-flight work, and transparently re-spawned on the
+  /// next event.
+  final Duration? idleTimeout;
+
+  /// Optional callback invoked after each idle shutdown. Not called on
+  /// explicit disposal.
+  final void Function()? onIdleShutdown;
+
   DroppableProcessingStrategy({
     this.isolates = 1,
     this.concurrency = 1,
+    this.idleTimeout,
+    this.onIdleShutdown,
   }) {
     if (isolates < 1) {
       throw ArgumentError.value(isolates, 'isolates', 'Must be at least 1');
@@ -393,7 +442,12 @@ class DroppableProcessingStrategy implements IsolatedProcessingStrategy {
     IsolatedHandler<S, R> handler,
     Stream<S> source,
   ) {
-    final pool = _IsolatePool<S, R?>(handler, isolates);
+    final pool = _IsolatePool<S, R?>(
+      handler,
+      isolates,
+      idleTimeout: idleTimeout,
+      onIdleShutdown: onIdleShutdown,
+    );
 
     final activeEvents = <int, _EventResult<S, R>>{};
     int currentEventId = 0;
@@ -427,11 +481,7 @@ class DroppableProcessingStrategy implements IsolatedProcessingStrategy {
       // Add new event to active events
       activeEvents[eventId] = _EventResult<S, R>(event);
 
-      pool.acquire().then((isolateWrapper) async {
-        if (controller.isClosed) return;
-
-        final result = await isolateWrapper.compute(event);
-
+      pool.run(event).then((result) {
         // If the controller is closed or the event is no longer active, ignore the result
         if (controller.isClosed || !activeEvents.containsKey(eventId)) return;
 
@@ -475,8 +525,13 @@ class DroppableProcessingStrategy implements IsolatedProcessingStrategy {
       onError: controller.addError,
       onDone: () {
         // Mark source as done (no more events will be added)
-        // Close later when all active events are processed
         sourceDone = true;
+        // If all active events have already been processed before the source
+        // finished, close the controller now — otherwise no later callback
+        // will run to trigger the close from inside `whenComplete`.
+        if (activeEvents.isEmpty) {
+          controller.close().whenComplete(() => pool.dispose());
+        }
       },
     );
 
@@ -594,9 +649,20 @@ class RestartableProcessingStrategy implements IsolatedProcessingStrategy {
   ///   isolates: 3,
   /// );
   /// ```
+  /// If set, the underlying isolate pool is released after this duration
+  /// elapses with no in-flight work, and transparently re-spawned on the
+  /// next event.
+  final Duration? idleTimeout;
+
+  /// Optional callback invoked after each idle shutdown. Not called on
+  /// explicit disposal.
+  final void Function()? onIdleShutdown;
+
   RestartableProcessingStrategy({
     this.isolates = 1,
     this.concurrency = 1,
+    this.idleTimeout,
+    this.onIdleShutdown,
   }) {
     if (isolates < 1) {
       throw ArgumentError.value(isolates, 'isolates', 'Must be at least 1');
@@ -613,7 +679,12 @@ class RestartableProcessingStrategy implements IsolatedProcessingStrategy {
     IsolatedHandler<S, R> handler,
     Stream<S> source,
   ) {
-    final pool = _IsolatePool<S, R?>(handler, isolates);
+    final pool = _IsolatePool<S, R?>(
+      handler,
+      isolates,
+      idleTimeout: idleTimeout,
+      onIdleShutdown: onIdleShutdown,
+    );
 
     final activeEvents = <int, _EventResult<S, R>>{};
     int currentEventId = 0;
@@ -648,11 +719,7 @@ class RestartableProcessingStrategy implements IsolatedProcessingStrategy {
         activeEvents.remove(oldestEventId);
       }
 
-      pool.acquire().then((isolateWrapper) async {
-        if (controller.isClosed) return;
-
-        final result = await isolateWrapper.compute(event);
-
+      pool.run(event).then((result) {
         // If the controller is closed or the event is no longer active, ignore the result
         if (controller.isClosed || !activeEvents.containsKey(eventId)) return;
 
@@ -696,8 +763,13 @@ class RestartableProcessingStrategy implements IsolatedProcessingStrategy {
       onError: controller.addError,
       onDone: () {
         // Mark source as done (no more events will be added)
-        // Close later when all active events are processed
         sourceDone = true;
+        // If all active events have already been processed before the source
+        // finished, close the controller now — otherwise no later callback
+        // will run to trigger the close from inside `whenComplete`.
+        if (activeEvents.isEmpty) {
+          controller.close().whenComplete(() => pool.dispose());
+        }
       },
     );
 
@@ -837,7 +909,21 @@ class ConcurrentProcessingStrategy implements IsolatedProcessingStrategy {
   /// - For CPU-bound work: `concurrency` ≈ number of CPU cores
   /// - For I/O-bound work: `concurrency` can be higher
   /// - Generally: `isolates` ≤ `concurrency` to avoid over-subscription
-  ConcurrentProcessingStrategy({this.concurrency = 1, this.isolates = 1}) {
+  /// If set, the underlying isolate pool is released after this duration
+  /// elapses with no in-flight work, and transparently re-spawned on the
+  /// next event.
+  final Duration? idleTimeout;
+
+  /// Optional callback invoked after each idle shutdown. Not called on
+  /// explicit disposal.
+  final void Function()? onIdleShutdown;
+
+  ConcurrentProcessingStrategy({
+    this.concurrency = 1,
+    this.isolates = 1,
+    this.idleTimeout,
+    this.onIdleShutdown,
+  }) {
     if (concurrency < 1) {
       throw ArgumentError.value(
           concurrency, 'concurrency', 'Must be at least 1');
@@ -853,7 +939,12 @@ class ConcurrentProcessingStrategy implements IsolatedProcessingStrategy {
     IsolatedHandler<T, E> handler,
     Stream<T> source,
   ) {
-    final pool = _IsolatePool<T, E>(handler, isolates);
+    final pool = _IsolatePool<T, E>(
+      handler,
+      isolates,
+      idleTimeout: idleTimeout,
+      onIdleShutdown: onIdleShutdown,
+    );
     final subscription = source.listen(
       null,
       onError: controller.addError,
@@ -864,8 +955,17 @@ class ConcurrentProcessingStrategy implements IsolatedProcessingStrategy {
     final Map<int, _EventResult<T, E>> completed = {};
     int nextInputIndex = 0;
     int nextOutputIndex = 0;
-    int activeTasks = 0;
     bool inputDone = false;
+
+    final policy = _ConcurrentPolicy<T, E>(
+      pool.run,
+      concurrency: concurrency,
+      onSpaceAvailable: () {
+        if (!inputDone) {
+          subscription.resume();
+        }
+      },
+    );
 
     void tryEmitNext() {
       while (completed.containsKey(nextOutputIndex)) {
@@ -886,36 +986,22 @@ class ConcurrentProcessingStrategy implements IsolatedProcessingStrategy {
 
     void processEvent(T event) {
       final index = nextInputIndex++;
-      activeTasks++;
 
-      final computation = pool.acquire().then((isolateWrapper) {
-        return isolateWrapper.compute(event);
-      });
-
+      final computation = policy.submit(event);
       pending[index] = computation;
 
       computation.then((result) {
         completed[index] = _EventResult<T, E>(event).withResult(result: result);
         pending.remove(index);
-        activeTasks--;
         tryEmitNext();
-
-        if (activeTasks < concurrency && !inputDone) {
-          subscription.resume();
-        }
       }).catchError((exception, stackTrace) {
         completed[index] = _EventResult<T, E>(event)
             .withException(exception: exception, stackTrace: stackTrace);
         pending.remove(index);
-        activeTasks--;
         tryEmitNext();
-
-        if (activeTasks < concurrency && !inputDone) {
-          subscription.resume();
-        }
       });
 
-      if (activeTasks >= concurrency) {
+      if (policy.isFull) {
         subscription.pause();
       }
     }

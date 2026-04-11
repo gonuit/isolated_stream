@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:isolate';
 
 part 'messages.dart';
@@ -6,7 +7,9 @@ part 'isolate_entry.dart';
 part 'isolate_wrapper.dart';
 part 'isolate_handler.dart';
 part 'isolate_pool.dart';
+part 'work_policy.dart';
 part 'processing_strategy.dart';
+part 'isolated_worker.dart';
 
 /// Extension that adds isolated processing capabilities to streams.
 extension IsolatedStreamExtension<T> on Stream<T> {
