@@ -1,0 +1,33 @@
+com# Mirrors the root .gitignore (pub uses .pubignore when present).
+.dart_tool/
+pubspec.lock
+coverage/
+
+# Flutter example: build outputs, platform ephemerals, tool caches, IDE
+# metadata. Not useful to pub.dev consumers — the package only ships
+# example/isolated_stream_example.dart and the `lib`/`test` sources.
+example/build/
+example/.dart_tool/
+example/.idea/
+example/.vscode/
+example/pubspec.lock
+
+example/android/.gradle/
+example/android/.kotlin/
+example/android/build/
+example/android/app/build/
+
+example/ios/Flutter/ephemeral/
+example/ios/Pods/
+example/ios/.symlinks/
+example/ios/build/
+
+example/linux/flutter/ephemeral/
+example/linux/build/
+
+example/macos/Flutter/ephemeral/
+example/macos/Pods/
+example/macos/build/
+
+example/windows/flutter/ephemeral/
+example/windows/build/
