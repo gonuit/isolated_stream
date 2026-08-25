@@ -18,15 +18,18 @@ extension IsolatedStreamExtension<T> on Stream<T> {
   /// This method is useful for CPU-intensive transformations that would otherwise
   /// block the main isolate. By default, elements are processed sequentially.
   ///
-  /// The [handler] defines the transformation logic and must be serializable.
+  /// The [handler] defines the transformation logic and must be sendable
+  /// to an isolate.
   ///
   /// Example:
   /// ```dart
   /// final stream = Stream.fromIterable([1, 2, 3, 4, 5]);
   /// final transformed = stream.isolatedMap(
   ///   MultiplyHandler(10),
-  ///   concurrency: 3,
-  ///   isolates: 2,
+  ///   strategy: IsolatedProcessingStrategy.concurrent(
+  ///     concurrency: 3,
+  ///     isolates: 2,
+  ///   ),
   /// );
   /// await for (final value in transformed) {
   ///   print(value); // 10, 20, 30, 40, 50 (in order)

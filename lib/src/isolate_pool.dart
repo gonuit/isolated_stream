@@ -23,6 +23,7 @@ class _IsolatePool<T, E> {
     if (_disposed) {
       throw StateError('Isolate pool disposed');
     }
+    _pool.removeWhere((wrapper) => wrapper.isDead);
     while (_pool.length < _maxSize) {
       final wrapper = _IsolateWrapper<T, E>(_handler);
       _pool.add(wrapper);
@@ -46,12 +47,9 @@ class _IsolatePool<T, E> {
     return wrapper;
   }
 
-  /// Idle-aware entry point: acquires a wrapper, runs [value] through it,
-  /// and manages the idle timer.
-  ///
-  /// Tracks in-flight work and (re)arms the idle timer automatically when
-  /// the last in-flight call completes. If the pool was idle-shut-down, the
-  /// next call transparently re-spawns isolates via [acquire].
+  /// Runs [value] through an acquired wrapper, tracking in-flight work and
+  /// (re)arming the idle timer. After an idle shutdown, the next call
+  /// re-spawns isolates.
   Future<E> run(T value) async {
     if (_disposed) {
       throw StateError('Isolate pool disposed');

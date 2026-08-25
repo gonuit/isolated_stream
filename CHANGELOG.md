@@ -1,3 +1,8 @@
+## 2.1.0-dev.2
+- Fixed: an unsendable handler error no longer kills the worker isolate and hangs `compute()` — it is delivered as a `RemoteError` fallback.
+- Fixed: worker isolates are monitored via `onExit`/`onError` — unexpected death fails in-flight `compute()` calls with a descriptive error and the pool re-spawns a fresh isolate on the next call.
+- Fixed: an unsendable input to `compute()` no longer leaks the reply port or causes an unhandled async error on a later `dispose()`.
+
 ## 2.1.0-dev.1
 - Added `IsolatedWorker<T, E>`: long-lived request/response API with `compute(value) -> Future<E>`.
 - Added `concurrency: int?` on `IsolatedWorker` — `null` is unbounded, `1` serializes calls, `N` caps in-flight at N and queues the rest.

@@ -17,7 +17,13 @@ void _isolateEntry<S, R>(_IsolateInitMessage<S, R> init) {
         req.replyTo.send(_OkMessage<R>(result));
       }
     } catch (e, st) {
-      req.replyTo.send(_ErrorMessage(e, st));
+      // The error itself may be unsendable; fall back to a RemoteError.
+      try {
+        req.replyTo.send(_ErrorMessage(e, st));
+      } catch (_) {
+        final error = RemoteError(e.toString(), st.toString());
+        req.replyTo.send(_ErrorMessage(error, error.stackTrace));
+      }
     }
   });
 }

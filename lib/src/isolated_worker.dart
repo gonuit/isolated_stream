@@ -62,12 +62,7 @@ class IsolatedWorker<T, E> {
     int? concurrency,
     Duration? idleTimeout,
     void Function()? onIdleShutdown,
-  }) : _pool = _IsolatePool<T, E>(
-          handler,
-          isolates,
-          idleTimeout: idleTimeout,
-          onIdleShutdown: onIdleShutdown,
-        ) {
+  }) {
     if (isolates < 1) {
       throw ArgumentError.value(isolates, 'isolates', 'Must be at least 1');
     }
@@ -75,6 +70,12 @@ class IsolatedWorker<T, E> {
       throw ArgumentError.value(
           concurrency, 'concurrency', 'Must be at least 1');
     }
+    _pool = _IsolatePool<T, E>(
+      handler,
+      isolates,
+      idleTimeout: idleTimeout,
+      onIdleShutdown: onIdleShutdown,
+    );
     if (concurrency == 1) {
       _policy = _SequentialPolicy<T, E>(_pool.run);
     } else if (concurrency != null) {
@@ -84,7 +85,7 @@ class IsolatedWorker<T, E> {
     }
   }
 
-  final _IsolatePool<T, E> _pool;
+  late final _IsolatePool<T, E> _pool;
   late final _WorkPolicy<T, E>? _policy;
   bool _disposed = false;
 
@@ -101,8 +102,8 @@ class IsolatedWorker<T, E> {
     try {
       return await (_policy?.submit(value) ?? _pool.run(value));
     } catch (_) {
-      // If the worker was disposed mid-call, surface the canonical error
-      // message instead of leaking the internal pool/wrapper error.
+      // A dispose() racing this call surfaces the canonical error instead
+      // of the internal pool/wrapper one.
       if (_disposed) {
         throw StateError('IsolatedWorker has been disposed');
       }

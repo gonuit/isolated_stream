@@ -1,40 +1,53 @@
 part of 'isolated_stream_base.dart';
 
+/// Owns a single worker isolate: spawning, request/reply routing, teardown.
 class _IsolateWrapper<T, E> {
   _IsolateWrapper(this._handler) {
-    // Pre-attach an error listener so that a spawn failure or kill-before-
-    // first-compute doesn't surface as an unhandled async error. Real
-    // awaiters of compute() attach their own listener and still see the
-    // error when they await _ready.future.
+    // Avoids an unhandled async error when spawn fails or kill() runs
+    // before the first compute() awaits _ready.
     _ready.future.ignore();
-    // Start spawning immediately. kill() coordinates via the _killed flag
-    // and by closing the handshake port.
     _spawn();
   }
 
   final IsolatedHandler<T, E> _handler;
 
   bool _killed = false;
+  bool _dead = false;
   Isolate? _isolate;
   SendPort? _requestPort;
   ReceivePort? _handshake;
+  ReceivePort? _monitorPort;
   final Completer<void> _ready = Completer<void>();
   final Map<ReceivePort, Completer<E>> _openReplies = {};
+
+  /// Whether the isolate terminated on its own (not via [kill]).
+  bool get isDead => _dead;
 
   Future<void> _spawn() async {
     final handshake = ReceivePort();
     _handshake = handshake;
+    final monitor = ReceivePort();
+    _monitorPort = monitor;
+    // onError delivers [errorDescription, stackDescription], onExit null;
+    // with errorsAreFatal both mean the isolate is gone.
+    monitor.listen((dynamic message) {
+      if (message is List && message.length == 2) {
+        _onIsolateDeath(RemoteError('${message[0]}', '${message[1] ?? ''}'));
+      } else {
+        _onIsolateDeath();
+      }
+    });
 
     try {
       final isolate = await Isolate.spawn<_IsolateInitMessage<T, E>>(
         _isolateEntry,
         _IsolateInitMessage<T, E>(handshake.sendPort, _handler),
+        onExit: monitor.sendPort,
+        onError: monitor.sendPort,
         errorsAreFatal: true,
         debugName: _handler.debugName,
       );
 
-      // If kill() ran before the isolate came back, tear it down now so
-      // we never leak a live isolate nobody references.
       if (_killed) {
         isolate.kill(priority: Isolate.immediate);
         _closeHandshake();
@@ -44,15 +57,12 @@ class _IsolateWrapper<T, E> {
 
       _isolate = isolate;
 
-      // Wait for the worker's SendPort via the handshake port. If kill()
-      // runs at any point while we're awaiting here, it will close the
-      // handshake port, which makes this `first` complete with a
-      // StateError('No element') so we can unwind.
+      // kill() and _onIsolateDeath() close the handshake port, making
+      // `first` throw so this method can unwind.
       final SendPort sendPort;
       try {
         sendPort = await handshake.first as SendPort;
       } catch (_) {
-        // handshake port was closed by kill() before the worker replied.
         _closeHandshake();
         _failReady();
         return;
@@ -70,8 +80,7 @@ class _IsolateWrapper<T, E> {
         _ready.complete();
       }
     } catch (e, st) {
-      // Isolate.spawn itself failed (rare). Propagate to any compute()
-      // callers waiting on _ready.
+      _closeMonitorPort();
       _closeHandshake();
       if (!_ready.isCompleted) {
         _ready.completeError(e, st);
@@ -79,32 +88,62 @@ class _IsolateWrapper<T, E> {
     }
   }
 
+  void _closeMonitorPort() {
+    _monitorPort?.close();
+    _monitorPort = null;
+  }
+
+  void _onIsolateDeath([RemoteError? error]) {
+    if (_killed || _dead) return;
+    _dead = true;
+    _isolate = null;
+    _requestPort = null;
+    _closeMonitorPort();
+    _closeHandshake();
+    _failReady();
+    _failAllInFlight(
+      error ??
+          StateError(
+            'Worker isolate exited unexpectedly '
+            'while a computation was in progress',
+          ),
+      error?.stackTrace,
+    );
+  }
+
+  void _failAllInFlight(Object error, [StackTrace? stackTrace]) {
+    for (final entry in _openReplies.entries) {
+      entry.key.close();
+      if (!entry.value.isCompleted) {
+        entry.value.completeError(error, stackTrace);
+      }
+    }
+    _openReplies.clear();
+  }
+
   void _closeHandshake() {
     _handshake?.close();
     _handshake = null;
   }
 
+  /// Completes [_ready] normally instead of with an error: an errored
+  /// completer with no listener would surface as an unhandled async error.
+  /// [compute] re-checks [_killed]/[_dead] right after the await.
   void _failReady() {
-    // Don't use completeError here: if nobody is awaiting yet (kill()
-    // running before the first compute() reaches `await _ready.future`),
-    // an errored completer becomes an unhandled async error. Instead,
-    // complete normally — compute() checks _killed right after the await
-    // and throws the canonical error synchronously.
     if (!_ready.isCompleted) {
       _ready.complete();
     }
   }
 
   Future<E> compute(T value) async {
-    // Wait for spawn to finish; throws if spawn failed or was killed.
     await _ready.future;
 
-    // After the await, the wrapper may have been killed. Everything from
-    // here through reqPort.send(...) is synchronous (no awaits), so kill()
-    // cannot interleave between the check and the registration in
-    // _openReplies.
+    // No awaits from here through send() — kill() cannot interleave.
     if (_killed) {
       throw StateError('Isolate has been killed');
+    }
+    if (_dead) {
+      throw StateError('Worker isolate exited unexpectedly');
     }
     final reqPort = _requestPort;
     if (reqPort == null) {
@@ -133,8 +172,14 @@ class _IsolateWrapper<T, E> {
       _openReplies.remove(reply);
     });
 
-    // send [value, replyPort] to the isolate
-    reqPort.send(_Req<T>(value, reply.sendPort));
+    try {
+      reqPort.send(_Req<T>(value, reply.sendPort));
+    } catch (_) {
+      sub.cancel();
+      reply.close();
+      _openReplies.remove(reply);
+      rethrow;
+    }
 
     return completer.future;
   }
@@ -143,27 +188,17 @@ class _IsolateWrapper<T, E> {
     if (_killed) return;
     _killed = true;
 
-    // Fail any in-flight compute() calls so their futures don't hang.
-    for (final entry in _openReplies.entries) {
-      entry.key.close();
-      if (!entry.value.isCompleted) {
-        entry.value.completeError(
-          StateError(
-            'Isolate was killed while a computation was in progress',
-          ),
-        );
-      }
-    }
-    _openReplies.clear();
+    _failAllInFlight(
+      StateError('Isolate was killed while a computation was in progress'),
+    );
 
-    // Unblock a pending _spawn() that may be awaiting handshake.first.
     _closeHandshake();
+    _closeMonitorPort();
 
     _isolate?.kill(priority: Isolate.immediate);
     _isolate = null;
     _requestPort = null;
 
-    // If spawn hadn't finished yet, fail _ready so awaiters unblock.
     _failReady();
   }
 }

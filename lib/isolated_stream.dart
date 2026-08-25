@@ -1,8 +1,5 @@
-/// Support for doing something awesome.
-///
-/// More dartdocs go here.
+/// Stream transformations and request/response workers running in
+/// background isolates, keeping CPU-intensive work off the main isolate.
 library;
 
 export 'src/isolated_stream_base.dart';
-
-// TODO: Export any libraries intended for clients of this package.
