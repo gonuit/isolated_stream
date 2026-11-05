@@ -9,7 +9,7 @@ class _IsolatePool<T, E> {
   })  : _idleTimeout = idleTimeout,
         _onIdleShutdown = onIdleShutdown;
 
-  final List<_IsolateWrapper<T, E>> _pool = [];
+  final List<HandlerRunner<T, E>> _pool = [];
   final IsolatedHandler<T, E> _handler;
   final int _maxSize;
   final Duration? _idleTimeout;
@@ -23,31 +23,30 @@ class _IsolatePool<T, E> {
     if (_disposed) {
       throw StateError('Isolate pool disposed');
     }
-    _pool.removeWhere((wrapper) => wrapper.isDead);
+    _pool.removeWhere((runner) => runner.isDead);
     while (_pool.length < _maxSize) {
-      final wrapper = _IsolateWrapper<T, E>(_handler);
-      _pool.add(wrapper);
+      _pool.add(spawnRunner<T, E>(_handler));
     }
   }
 
-  /// Acquire an isolate wrapper using round-robin selection.
+  /// Acquire a runner using round-robin selection.
   ///
   /// Callers using [acquire] directly do NOT get idle-timeout tracking.
   /// If [idleTimeout] was set on the pool, use [run] instead.
-  Future<_IsolateWrapper<T, E>> acquire() async {
+  Future<HandlerRunner<T, E>> acquire() async {
     await _ensurePoolSize();
 
     if (_pool.isEmpty) {
       throw StateError('Isolate pool is empty');
     }
 
-    final wrapper = _pool[_currentIndex % _pool.length];
+    final runner = _pool[_currentIndex % _pool.length];
     _currentIndex = (_currentIndex + 1) % _pool.length;
 
-    return wrapper;
+    return runner;
   }
 
-  /// Runs [value] through an acquired wrapper, tracking in-flight work and
+  /// Runs [value] through an acquired runner, tracking in-flight work and
   /// (re)arming the idle timer. After an idle shutdown, the next call
   /// re-spawns isolates.
   Future<E> run(T value) async {
@@ -58,12 +57,12 @@ class _IsolatePool<T, E> {
     _idleTimer?.cancel();
     _idleTimer = null;
     try {
-      final wrapper = await acquire();
-      return await wrapper.compute(value);
+      final runner = await acquire();
+      return await runner.compute(value);
     } finally {
       _inFlight--;
       if (_inFlight == 0 && !_disposed && _idleTimeout != null) {
-        _idleTimer = Timer(_idleTimeout!, _onIdle);
+        _idleTimer = Timer(_idleTimeout, _onIdle);
       }
     }
   }
@@ -76,8 +75,8 @@ class _IsolatePool<T, E> {
   }
 
   void _shutdownIsolates() {
-    for (final wrapper in _pool) {
-      wrapper.kill();
+    for (final runner in _pool) {
+      runner.kill();
     }
     _pool.clear();
   }

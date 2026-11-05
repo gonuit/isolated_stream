@@ -1,7 +1,14 @@
-com# Mirrors the root .gitignore (pub uses .pubignore when present).
+# Mirrors the root .gitignore (pub uses .pubignore when present).
 .dart_tool/
 pubspec.lock
 coverage/
+
+# Compiled test workers (tool/test_web.sh).
+test/web/worker.dart.js*
+test/web/worker.wasm*
+test/web/worker.mjs
+test/web/worker.support.js
+test/web/*.deps
 
 # Flutter example: build outputs, platform ephemerals, tool caches, IDE
 # metadata. Not useful to pub.dev consumers — the package only ships

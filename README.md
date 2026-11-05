@@ -11,6 +11,7 @@ Make isolates as simple as streams — *or as simple as a function call*. Offloa
 - 🎱 **Isolate pooling** - Distribute work across multiple isolates
 - 💤 **Idle offloading** - Automatically release isolates after inactivity and transparently re-spawn on demand
 - 🎮 **Simple API** - Easy-to-use extension method on streams
+- 🕸️ **Web support** - Web Workers on the web, or the main thread with no setup
 
 ## When to use 🤔
 
@@ -25,7 +26,7 @@ This package is perfect for:
 1. **Install this package.**
    ```yaml
    dependencies:
-     isolated_stream: ^2.1.0-dev.1
+     isolated_stream: ^3.0.0-dev.1
    ```
 
 2. **Import it in your Dart file.**
@@ -201,9 +202,63 @@ final responses = apis.isolatedMap(
 );
 ```
 
+## 🕸️ Web
+
+There are no isolates on the web. Without any setup a handler runs on the main thread there, one call per event-loop task, so the same code works everywhere.
+
+To keep the work off the main thread, run the handler in a Web Worker:
+
+1. **Point the handler at a worker script.** `init` is sent to every worker once and the handler is built from it there.
+   ```dart
+   class MultiplyHandler extends IsolatedHandler<int, int> {
+     MultiplyHandler(this.factor);
+
+     final int factor;
+
+     @override
+     int compute(int value) => value * factor;
+
+     @override
+     IsolatedWebWorker get webWorker =>
+         IsolatedWebWorker('workers/multiply.dart.js', init: factor);
+   }
+   ```
+
+2. **Write the worker's `main`.**
+   ```dart
+   // web/workers/multiply.dart
+   import 'package:isolated_stream/isolated_stream.dart';
+   import 'package:my_app/multiply_handler.dart';
+
+   void main() => runIsolatedHandler((init) => MultiplyHandler(init as int));
+   ```
+
+3. **Compile it next to your page.**
+   ```sh
+   dart compile js -O2 web/workers/multiply.dart -o web/workers/multiply.dart.js
+   ```
+   Or to WebAssembly, which needs WasmGC (Chrome 119, Firefox 120, Safari 18.2):
+   ```sh
+   dart compile wasm -O2 web/workers/multiply.dart -o web/workers/multiply.wasm
+   ```
+   and name `workers/multiply.wasm` in `IsolatedWebWorker`. The `.mjs` file written beside it is loaded from the same folder. The worker does not have to be compiled the same way as the page.
+
+Nothing else changes: `isolatedMap`, `IsolatedWorker`, `isolates`, `concurrency` and `idleTimeout` work the same, with one worker per isolate. In a Flutter app `flutter build web` copies `web/` as it is, so the compiled worker ships with the app. The handler and everything it imports must not depend on Flutter.
+
+Values cross to a worker by structured clone, not as Dart objects:
+- allowed: `null`, `bool`, numbers, `String`, typed data, and `List`s and `Map`s with `String` keys of these
+- `List`s and `Map`s arrive as `List<Object?>` and `Map<Object?, Object?>`
+- a whole number arrives as an `int`, unless a `double` is expected
+- typed data is copied
+- an error thrown by the handler arrives as a `RemoteWorkerError` with its message and stack trace
+
+When the page is compiled to WebAssembly, typed data received from a worker stays in JavaScript memory: passing it on is free, while reading it element by element from Dart is slower than with a Dart list. Copy it once with `Uint8List.fromList` before heavy reads. Sending typed data from such a page copies it out of WebAssembly memory first.
+
 ## ⚠️ Important notes
 
 ### 📦 Serialization requirements
+On the web, see the Web section above for what can cross to a worker.
+
 Data must be sendable through Dart's `SendPort` mechanism for inter-isolate communication. Since isolates created with `Isolate.spawn` share the same code, most objects are sendable:
 
 **✅ Always sendable:**

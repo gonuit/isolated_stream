@@ -1,3 +1,10 @@
+## 3.0.0-dev.1
+- **BREAKING CHANGE**: requires Dart 3.3 (`dart:js_interop`).
+- Added web support: a handler runs in a Web Worker when it overrides `webWorker`, on the main thread otherwise.
+- Added `IsolatedWebWorker`: the worker script (`dart compile js` or `dart compile wasm` output) and the `init` value its handler is built from.
+- Added `runIsolatedHandler`: the `main` of a worker script.
+- Added `RemoteWorkerError`: a handler error or a worker failure on the web.
+
 ## 2.1.0
 - Fixed: an unsendable handler error no longer kills the worker isolate and hangs `compute()` — it is delivered as a `RemoteError` fallback.
 - Fixed: worker isolates are monitored via `onExit`/`onError` — unexpected death fails in-flight `compute()` calls with a descriptive error and the pool re-spawns a fresh isolate on the next call.
