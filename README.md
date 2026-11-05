@@ -26,7 +26,7 @@ This package is perfect for:
 1. **Install this package.**
    ```yaml
    dependencies:
-     isolated_stream: ^3.0.0-dev.1
+     isolated_stream: ^3.0.0-dev.2
    ```
 
 2. **Import it in your Dart file.**
@@ -204,15 +204,12 @@ final responses = apis.isolatedMap(
 
 ## 🕸️ Web
 
-There are no isolates on the web. Without any setup a handler runs on the main thread there, one call per event-loop task, so the same code works everywhere.
+No isolates on the web. With no setup a handler runs on the main thread, so the same code works everywhere. To move it to a Web Worker:
 
-To keep the work off the main thread, run the handler in a Web Worker:
-
-1. **Point the handler at a worker script.** `init` is sent to every worker once and the handler is built from it there.
+1. **Name the worker.** `init` is sent to each worker once; the handler is built from it there.
    ```dart
    class MultiplyHandler extends IsolatedHandler<int, int> {
      MultiplyHandler(this.factor);
-
      final int factor;
 
      @override
@@ -220,39 +217,22 @@ To keep the work off the main thread, run the handler in a Web Worker:
 
      @override
      IsolatedWebWorker get webWorker =>
-         IsolatedWebWorker('workers/multiply.dart.js', init: factor);
+         IsolatedWebWorker('workers/multiply.worker', init: factor);
    }
    ```
-
-2. **Write the worker's `main`.**
+2. **Write its `main`** in `web/workers/multiply.worker.dart`:
    ```dart
-   // web/workers/multiply.dart
-   import 'package:isolated_stream/isolated_stream.dart';
-   import 'package:my_app/multiply_handler.dart';
-
    void main() => runIsolatedHandler((init) => MultiplyHandler(init as int));
    ```
+3. **Compile:** `dart run isolated_stream:build` (every `web/**/*.worker.dart` → `.js` + `.wasm`; rerun after changes). The browser gets Wasm where supported, JS elsewhere; `multiply.worker.js` / `.wasm` pins one.
 
-3. **Compile it next to your page.**
-   ```sh
-   dart compile js -O2 web/workers/multiply.dart -o web/workers/multiply.dart.js
-   ```
-   Or to WebAssembly, which needs WasmGC (Chrome 119, Firefox 120, Safari 18.2):
-   ```sh
-   dart compile wasm -O2 web/workers/multiply.dart -o web/workers/multiply.wasm
-   ```
-   and name `workers/multiply.wasm` in `IsolatedWebWorker`. The `.mjs` file written beside it is loaded from the same folder. The worker does not have to be compiled the same way as the page.
+Everything else (`isolatedMap`, `IsolatedWorker`, `isolates`, `concurrency`, `idleTimeout`) works as on native, one worker per isolate. Flutter copies `web/` into the build; the handler must not import Flutter.
 
-Nothing else changes: `isolatedMap`, `IsolatedWorker`, `isolates`, `concurrency` and `idleTimeout` work the same, with one worker per isolate. In a Flutter app `flutter build web` copies `web/` as it is, so the compiled worker ships with the app. The handler and everything it imports must not depend on Flutter.
-
-Values cross to a worker by structured clone, not as Dart objects:
-- allowed: `null`, `bool`, numbers, `String`, typed data, and `List`s and `Map`s with `String` keys of these
-- `List`s and `Map`s arrive as `List<Object?>` and `Map<Object?, Object?>`
-- a whole number arrives as an `int`, unless a `double` is expected
-- typed data is copied
-- an error thrown by the handler arrives as a `RemoteWorkerError` with its message and stack trace
-
-When the page is compiled to WebAssembly, typed data received from a worker stays in JavaScript memory: passing it on is free, while reading it element by element from Dart is slower than with a Dart list. Copy it once with `Uint8List.fromList` before heavy reads. Sending typed data from such a page copies it out of WebAssembly memory first.
+Values cross by structured clone:
+- `null`, `bool`, numbers, `String`, typed data, `List`, `Map` with `String` keys; anything else throws `ArgumentError`
+- lists and maps arrive as `List<Object?>` / `Map<Object?, Object?>`; whole numbers as `int` unless a `double` is expected
+- handler errors arrive as `RemoteWorkerError` (message + stack trace)
+- on a Wasm page, typed data from a worker stays in JS memory: cheap to pass on, slow to read per element; copy with `Uint8List.fromList` before heavy reads
 
 ## ⚠️ Important notes
 

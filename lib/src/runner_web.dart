@@ -12,7 +12,7 @@ import 'runner.dart';
 HandlerRunner<T, E> spawnRunner<T, E>(IsolatedHandler<T, E> handler) {
   final worker = handler.webWorker;
   if (worker != null && globalContext.has('Worker')) {
-    return _WorkerRunner<T, E>(worker);
+    return _WorkerRunner<T, E>(_compiled(worker.script), worker.init);
   }
   return _InPlaceRunner<T, E>(handler);
 }
@@ -76,9 +76,8 @@ Future<void> _answer(int id, FutureOr<Object?> Function() run) async {
 }
 
 final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
-  _WorkerRunner(IsolatedWebWorker config)
-      : _script = config.script,
-        _bootstrap = _wasmBootstrap(config.script) {
+  _WorkerRunner(this._script, Object? init)
+      : _bootstrap = _wasmBootstrap(_script) {
     try {
       _worker = switch (_bootstrap) {
         final bootstrap? =>
@@ -88,7 +87,7 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
         ..onmessage = _onMessage.toJS
         ..onerror = _onError.toJS
         ..onmessageerror = _onMessageError.toJS
-        ..postMessage(_toJs(_init, 0, config.init));
+        ..postMessage(_toJs(_init, 0, init));
     } catch (_) {
       _stop();
       rethrow;
@@ -235,6 +234,32 @@ final class _InPlaceRunner<T, E> implements HandlerRunner<T, E> {
     }
   }
 }
+
+/// [script] with the extension of the compiled script to load: as it is
+/// if it names one (`.js`, `.wasm`), else `.wasm` if the browser runs
+/// WebAssembly built by `dart compile wasm` and `.js` if not.
+String _compiled(String script) {
+  final uri = Uri.parse(script);
+  if (uri.path.endsWith('.js') || uri.path.endsWith('.wasm')) return script;
+  return uri
+      .replace(path: '${uri.path}${_runsWasm ? '.wasm' : '.js'}')
+      .toString();
+}
+
+/// Whether the browser has the WebAssembly features `dart compile wasm`
+/// needs (garbage collection and SIMD), checked as its `.support.js` does.
+final bool _runsWasm = _wasm ||
+    _validate([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 95, 1, 120, 0]) &&
+        _validate([
+          0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, //
+          10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11,
+        ]);
+
+bool _validate(List<int> module) =>
+    _webAssemblyValidate(Uint8List.fromList(module).toJS);
+
+@JS('WebAssembly.validate')
+external bool _webAssemblyValidate(JSUint8Array bytes);
 
 /// For a [script] compiled with `dart compile wasm`, the object URL of a
 /// module worker starting it with the `.mjs` loader beside it; null for

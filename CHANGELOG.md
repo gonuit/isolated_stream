@@ -1,9 +1,11 @@
+## 3.0.0-dev.2
+- Added `dart run isolated_stream:build`: compiles `web/**/*.worker.dart` to JS and Wasm.
+- `IsolatedWebWorker('x.worker')` without an extension loads the Wasm build where supported, JS elsewhere.
+
 ## 3.0.0-dev.1
-- **BREAKING CHANGE**: requires Dart 3.3 (`dart:js_interop`).
-- Added web support: a handler runs in a Web Worker when it overrides `webWorker`, on the main thread otherwise.
-- Added `IsolatedWebWorker`: the worker script (`dart compile js` or `dart compile wasm` output) and the `init` value its handler is built from.
-- Added `runIsolatedHandler`: the `main` of a worker script.
-- Added `RemoteWorkerError`: a handler error or a worker failure on the web.
+- **BREAKING CHANGE**: requires Dart 3.3.
+- Web support: a handler runs in a Web Worker if it overrides `webWorker`, else on the main thread.
+- Added `IsolatedWebWorker`, `runIsolatedHandler`, `RemoteWorkerError`.
 
 ## 2.1.0
 - Fixed: an unsendable handler error no longer kills the worker isolate and hangs `compute()` — it is delivered as a `RemoteError` fallback.

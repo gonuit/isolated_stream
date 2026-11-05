@@ -5,8 +5,9 @@ import 'package:isolated_stream/isolated_stream.dart';
 /// Calls served by this thread, worker or page.
 int served = 0;
 
-/// The compiled test worker: `worker.dart.js` or `worker.wasm`.
-String script = 'worker.dart.js';
+/// The compiled test worker: `worker.js`, `worker.wasm`, or `worker` for
+/// whichever the browser runs.
+String script = 'worker.js';
 
 class ScaleHandler extends IsolatedHandler<int, int> {
   ScaleHandler(this.factor);

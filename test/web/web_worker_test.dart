@@ -12,7 +12,7 @@ import 'handlers.dart';
 void main() {
   setUp(() => served = 0);
 
-  for (final compiled in ['worker.dart.js', 'worker.wasm']) {
+  for (final compiled in ['worker.js', 'worker.wasm', 'worker']) {
     group('handler with a web worker ($compiled)', () {
       setUp(() => script = compiled);
       workerTests();

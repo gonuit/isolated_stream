@@ -47,7 +47,7 @@ abstract class IsolatedHandler<T, E> {
   /// ```dart
   /// @override
   /// IsolatedWebWorker get webWorker =>
-  ///     IsolatedWebWorker('workers/multiply.dart.js', init: factor);
+  ///     IsolatedWebWorker('workers/multiply.worker', init: factor);
   /// ```
   IsolatedWebWorker? get webWorker => null;
 }
@@ -55,25 +55,28 @@ abstract class IsolatedHandler<T, E> {
 /// A compiled Web Worker script that runs an [IsolatedHandler] on the web.
 ///
 /// The script is a Dart file whose `main` calls `runIsolatedHandler`,
-/// compiled with `dart compile js`, or with `dart compile wasm` and named
-/// by its `.wasm` file:
+/// compiled to JavaScript and WebAssembly by `dart run isolated_stream:build`:
 ///
 /// ```dart
-/// // web/workers/multiply.dart
+/// // web/workers/multiply.worker.dart
 /// import 'package:isolated_stream/isolated_stream.dart';
 ///
 /// void main() => runIsolatedHandler((init) => MultiplyHandler(init as int));
 /// ```
 ///
 /// ```sh
-/// dart compile js -O2 web/workers/multiply.dart -o web/workers/multiply.dart.js
+/// dart run isolated_stream:build
 /// ```
+///
+/// Named without an extension (`workers/multiply.worker`), the worker is
+/// the WebAssembly one where the browser can run it and the JavaScript one
+/// elsewhere; named with `.js` or `.wasm`, it is that one.
 final class IsolatedWebWorker {
   /// A worker loaded from [script], a URL relative to the page, whose
   /// handler is built from [init].
   const IsolatedWebWorker(this.script, {this.init});
 
-  /// The URL of the compiled worker script.
+  /// The URL of the compiled worker script, relative to the page.
   final String script;
 
   /// What the worker builds its handler from: sent once to every worker
