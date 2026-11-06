@@ -87,6 +87,17 @@ void workerTests() {
     expect(result, [250, 3, 2, 1]);
   });
 
+  test('moves the buffers the handler names instead of copying them', () async {
+    final worker = IsolatedWorker<int, Object?>(MovingHandler());
+    addTearDown(worker.dispose);
+
+    final result = await worker.compute(4) as List<Object?>;
+    expect(result, List.filled(4, [0, 1, 2, 3]));
+    // Moved: gone from the worker; the one not named: still there.
+    final held = await worker.compute(-1) as List<Object?>;
+    expect(held.take(3), [0, 0, 4]);
+  });
+
   test('passes lists, maps and numbers', () async {
     final worker = IsolatedWorker<List<Object?>, Object?>(SummaryHandler());
     addTearDown(worker.dispose);

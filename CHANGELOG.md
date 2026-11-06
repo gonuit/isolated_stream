@@ -1,3 +1,6 @@
+## 3.0.0-dev.3
+- Added `IsolatedHandler.transferOf`: the buffers of a result a Web Worker moves to the caller (`postMessage` transfer list) instead of copying. No effect on native platforms, where the handler's isolate copies a result as it sends it.
+
 ## 3.0.0-dev.2
 - Added `dart run isolated_stream:build`: compiles `web/**/*.worker.dart` to JS and Wasm.
 - `IsolatedWebWorker('x.worker')` without an extension loads the Wasm build where supported, JS elsewhere.
