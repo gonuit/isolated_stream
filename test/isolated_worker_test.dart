@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:isolated_stream/isolated_stream.dart';
 import 'package:test/test.dart';
@@ -48,8 +49,32 @@ class _SleepReturnHandler extends IsolatedHandler<int, int> {
   }
 }
 
+/// Names its result's buffer to move: natively nothing is moved.
+class _MovingBytesHandler extends IsolatedHandler<int, Uint8List> {
+  const _MovingBytesHandler();
+
+  @override
+  Uint8List compute(int value) =>
+      Uint8List.fromList(List.generate(value, (i) => i));
+
+  @override
+  List<ByteBuffer> transferOf(Uint8List result) => [result.buffer];
+}
+
 void main() {
   group('IsolatedWorker', () {
+    test('a result whose buffers are named to move arrives whole', () async {
+      final worker = IsolatedWorker<int, Uint8List>(
+        const _MovingBytesHandler(),
+      );
+      try {
+        expect(await worker.compute(4), [0, 1, 2, 3]);
+        expect(await worker.compute(3), [0, 1, 2]);
+      } finally {
+        worker.dispose();
+      }
+    });
+
     test('single compute returns the expected value', () async {
       final worker = IsolatedWorker<TestHandlerEvent, int>(ValueHandler());
       try {

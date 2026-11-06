@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 /// A handler that defines how to transform data in an isolate.
 ///
@@ -39,6 +40,23 @@ abstract class IsolatedHandler<T, E> {
   /// The input [value] must be serializable (primitive types, lists, maps, etc.)
   /// The return value must also be serializable.
   FutureOr<E> compute(T value);
+
+  /// The buffers of [result] to move to the caller instead of copying
+  /// them, none by default.
+  ///
+  /// On the web a Web Worker transfers them with its result (the
+  /// `postMessage` transfer list): they cross at no cost, and are empty
+  /// in the worker after, so it must not use them again. Compiled
+  /// to WebAssembly, bytes made in Dart's memory are first copied to
+  /// JavaScript's, in the worker, and that copy moves. On native platforms
+  /// nothing moves: the isolate that computes a result copies it as it
+  /// sends it, and the caller takes that copy as it is.
+  ///
+  /// ```dart
+  /// @override
+  /// List<ByteBuffer> transferOf(Uint8List result) => [result.buffer];
+  /// ```
+  List<ByteBuffer> transferOf(E result) => const [];
 
   /// The Web Worker this handler runs in on the web, or null to run it on
   /// the main thread there. Ignored on native platforms, where the handler

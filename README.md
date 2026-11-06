@@ -233,6 +233,11 @@ Values cross by structured clone:
 - lists and maps arrive as `List<Object?>` / `Map<Object?, Object?>`; whole numbers as `int` unless a `double` is expected
 - handler errors arrive as `RemoteWorkerError` (message + stack trace)
 - on a Wasm page, typed data from a worker stays in JS memory: cheap to pass on, slow to read per element; copy with `Uint8List.fromList` before heavy reads
+- large results: name their buffers in `transferOf` to move them instead of copying (the worker must not use them after; a Wasm worker copies bytes from Dart memory to JS once, then moves that copy):
+  ```dart
+  @override
+  List<ByteBuffer> transferOf(Uint8List result) => [result.buffer];
+  ```
 
 ## ⚠️ Important notes
 

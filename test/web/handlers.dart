@@ -1,3 +1,5 @@
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
 import 'package:isolated_stream/isolated_stream.dart';
@@ -69,6 +71,52 @@ class HalfHandler extends IsolatedHandler<double, double> {
   IsolatedWebWorker get webWorker => IsolatedWebWorker(script, init: ['half']);
 }
 
+/// Bytes in JavaScript's memory, where moving them shows: `[moved,
+/// movedAgain, kept, movedFromDart]`, the first two one buffer, named
+/// twice in [transferOf]; the last made in Dart's memory. A negative value
+/// asks for the bytes the worker still holds of each of the last ones.
+class MovingHandler extends IsolatedHandler<int, Object?> {
+  /// The last bytes, as JavaScript has them: Dart's typed data on a moved
+  /// buffer may throw when read.
+  List<JSUint8Array> _last = const [];
+
+  @override
+  Object? compute(int value) {
+    if (value < 0) {
+      return [
+        for (final bytes in _last)
+          bytes.getProperty<JSNumber>('byteLength'.toJS).toDartInt,
+      ];
+    }
+    Uint8List counted(Uint8List bytes) {
+      for (var i = 0; i < bytes.length; i++) {
+        bytes[i] = i;
+      }
+      return bytes;
+    }
+
+    final moved = counted(Uint8List(value).toJS.toDart);
+    final kept = counted(Uint8List(value).toJS.toDart);
+    final fromDart = counted(Uint8List(value));
+    _last = [moved.toJS, moved.toJS, kept.toJS, fromDart.toJS];
+    return [moved, moved.buffer.asUint8List(), kept, fromDart];
+  }
+
+  @override
+  List<ByteBuffer> transferOf(Object? result) => switch (result) {
+        [Uint8List moved, Uint8List again, _, Uint8List fromDart] => [
+            moved.buffer,
+            again.buffer,
+            fromDart.buffer,
+          ],
+        _ => const [],
+      };
+
+  @override
+  IsolatedWebWorker get webWorker =>
+      IsolatedWebWorker(script, init: ['moving']);
+}
+
 /// Returns what cannot cross to the page.
 class UnsendableHandler extends IsolatedHandler<int, Object?> {
   @override
@@ -121,6 +169,8 @@ IsolatedHandler<dynamic, dynamic> handlerFor(Object? init) {
       return SummaryHandler();
     case 'half':
       return HalfHandler();
+    case 'moving':
+      return MovingHandler();
     case 'unsendable':
       return UnsendableHandler();
   }

@@ -54,24 +54,32 @@ void runIsolatedHandler<T, E>(
         Error.throwWithStackTrace(failure!, failureStack!);
       }
       return ready.compute(_input(ready, payload) as T);
-    });
+    }, (result) => handler!.transferOf(result as E));
   }
 
   _self.onmessage = onMessage.toJS;
 }
 
-Future<void> _answer(int id, FutureOr<Object?> Function() run) async {
+Future<void> _answer(
+  int id,
+  FutureOr<Object?> Function() run,
+  List<ByteBuffer> Function(Object? result) transferOf,
+) async {
   try {
     final result = await run();
     try {
-      _self.postMessage(_toJs(_ok, id, result));
+      final transfer = <JSArrayBuffer>[];
+      final message =
+          _toJs(_ok, id, result, moved: transferOf(result), transfer: transfer);
+      _self.postMessage(message, transfer.toJS);
       return;
     } catch (error, stackTrace) {
       _self.postMessage(_toJs(_error, id, 'Result could not be sent: $error',
-          stackTrace.toString()));
+          stackTrace: stackTrace.toString()));
     }
   } catch (error, stackTrace) {
-    _self.postMessage(_toJs(_error, id, error.toString(), '$stackTrace'));
+    _self.postMessage(
+        _toJs(_error, id, error.toString(), stackTrace: '$stackTrace'));
   }
 }
 
@@ -291,30 +299,63 @@ const _call = 1;
 const _ok = 2;
 const _error = 3;
 
-/// Every message, either way: `[kind, id, payload, stackTrace]`.
-JSAny? _toJs(int kind, int id, Object? payload, [String? stackTrace]) {
-  _checkSendable(payload);
-  return <Object?>[kind, id, payload, stackTrace].jsify();
-}
+/// Every message, either way: `[kind, id, payload, stackTrace]`. The
+/// buffers of [moved] it holds go to [transfer], to move with it.
+JSAny? _toJs(
+  int kind,
+  int id,
+  Object? payload, {
+  String? stackTrace,
+  List<ByteBuffer> moved = const [],
+  List<JSArrayBuffer>? transfer,
+}) =>
+    _jsified([kind, id, payload, stackTrace], moved, transfer ?? []);
 
-/// Throws unless [value] can cross to or from a worker: compiled to
-/// JavaScript, other objects would be copied as plain objects instead.
-void _checkSendable(Object? value) {
+/// [value] in JavaScript, if it can cross to or from a worker; throws
+/// otherwise: compiled to JavaScript, other objects would be copied as
+/// plain objects instead. The JavaScript buffers of [moved] it holds are
+/// added to [transfer], each once.
+JSAny? _jsified(
+  Object? value,
+  List<ByteBuffer> moved,
+  List<JSArrayBuffer> transfer,
+) {
   switch (value) {
-    case null || bool() || num() || String() || TypedData() || ByteBuffer():
-      return;
+    case null || bool() || num() || String():
+      return value.jsify();
+    case TypedData():
+      // A typed array or a DataView, in JavaScript's memory.
+      final typed = value.jsify()! as JSObject;
+      if (moved.contains(value.buffer)) {
+        _move(typed.getProperty<JSArrayBuffer>('buffer'.toJS), transfer);
+      }
+      return typed;
+    case ByteBuffer():
+      final buffer = value.jsify()! as JSArrayBuffer;
+      if (moved.contains(value)) _move(buffer, transfer);
+      return buffer;
     case List():
-      value.forEach(_checkSendable);
+      return [for (final item in value) _jsified(item, moved, transfer)].toJS;
     case Map():
+      final object = JSObject();
       for (final MapEntry(:key, value: item) in value.entries) {
         if (key is! String) {
           throw ArgumentError.value(
               key, 'key', 'Only String map keys can cross to a Web Worker');
         }
-        _checkSendable(item);
+        object[key] = _jsified(item, moved, transfer);
       }
+      return object;
     default:
       throw ArgumentError.value(value, 'value', 'Cannot cross to a Web Worker');
+  }
+}
+
+/// Adds [buffer] to [transfer] unless it is there: a buffer listed twice
+/// cannot be sent.
+void _move(JSArrayBuffer buffer, List<JSArrayBuffer> transfer) {
+  if (!transfer.any((listed) => listed.strictEquals(buffer).toDart)) {
+    transfer.add(buffer);
   }
 }
 
@@ -400,7 +441,7 @@ extension type _ErrorEvent._(JSObject _) implements JSObject {
 }
 
 extension type _WorkerScope._(JSObject _) implements JSObject {
-  external void postMessage(JSAny? message);
+  external void postMessage(JSAny? message, [JSArray<JSArrayBuffer> transfer]);
   external set onmessage(JSFunction? handler);
 }
 
