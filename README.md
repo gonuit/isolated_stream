@@ -11,6 +11,7 @@ Make isolates as simple as streams — *or as simple as a function call*. Offloa
 - 🎱 **Isolate pooling** - Distribute work across multiple isolates
 - 💤 **Idle offloading** - Automatically release isolates after inactivity and transparently re-spawn on demand
 - 🎮 **Simple API** - Easy-to-use extension method on streams
+- 🕸️ **Web support** - Web Workers on the web, or the main thread with no setup
 
 ## When to use 🤔
 
@@ -25,7 +26,7 @@ This package is perfect for:
 1. **Install this package.**
    ```yaml
    dependencies:
-     isolated_stream: ^2.1.0-dev.1
+     isolated_stream: ^3.0.0-dev.2
    ```
 
 2. **Import it in your Dart file.**
@@ -201,9 +202,48 @@ final responses = apis.isolatedMap(
 );
 ```
 
+## 🕸️ Web
+
+No isolates on the web. With no setup a handler runs on the main thread, so the same code works everywhere. To move it to a Web Worker:
+
+1. **Name the worker.** `init` is sent to each worker once; the handler is built from it there.
+   ```dart
+   class MultiplyHandler extends IsolatedHandler<int, int> {
+     MultiplyHandler(this.factor);
+     final int factor;
+
+     @override
+     int compute(int value) => value * factor;
+
+     @override
+     IsolatedWebWorker get webWorker =>
+         IsolatedWebWorker('workers/multiply.worker', init: factor);
+   }
+   ```
+2. **Write its `main`** in `web/workers/multiply.worker.dart`:
+   ```dart
+   void main() => runIsolatedHandler((init) => MultiplyHandler(init as int));
+   ```
+3. **Compile:** `dart run isolated_stream:build` (every `web/**/*.worker.dart` → `.js` + `.wasm`; rerun after changes). The browser gets Wasm where supported, JS elsewhere; `multiply.worker.js` / `.wasm` pins one.
+
+Everything else (`isolatedMap`, `IsolatedWorker`, `isolates`, `concurrency`, `idleTimeout`) works as on native, one worker per isolate. Flutter copies `web/` into the build; the handler must not import Flutter.
+
+Values cross by structured clone:
+- `null`, `bool`, numbers, `String`, typed data, `List`, `Map` with `String` keys; anything else throws `ArgumentError`
+- lists and maps arrive as `List<Object?>` / `Map<Object?, Object?>`; whole numbers as `int` unless a `double` is expected
+- handler errors arrive as `RemoteWorkerError` (message + stack trace)
+- on a Wasm page, typed data from a worker stays in JS memory: cheap to pass on, slow to read per element; copy with `Uint8List.fromList` before heavy reads
+- large results: name their buffers in `transferOf` to move them instead of copying (the worker must not use them after; a Wasm worker copies bytes from Dart memory to JS once, then moves that copy):
+  ```dart
+  @override
+  List<ByteBuffer> transferOf(Uint8List result) => [result.buffer];
+  ```
+
 ## ⚠️ Important notes
 
 ### 📦 Serialization requirements
+On the web, see the Web section above for what can cross to a worker.
+
 Data must be sendable through Dart's `SendPort` mechanism for inter-isolate communication. Since isolates created with `Isolate.spawn` share the same code, most objects are sendable:
 
 **✅ Always sendable:**

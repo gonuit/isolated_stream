@@ -1,3 +1,15 @@
+## 3.0.0-dev.3
+- Added `IsolatedHandler.transferOf`: the buffers of a result a Web Worker moves to the caller (`postMessage` transfer list) instead of copying. No effect on native platforms, where the handler's isolate copies a result as it sends it.
+
+## 3.0.0-dev.2
+- Added `dart run isolated_stream:build`: compiles `web/**/*.worker.dart` to JS and Wasm.
+- `IsolatedWebWorker('x.worker')` without an extension loads the Wasm build where supported, JS elsewhere.
+
+## 3.0.0-dev.1
+- **BREAKING CHANGE**: requires Dart 3.3.
+- Web support: a handler runs in a Web Worker if it overrides `webWorker`, else on the main thread.
+- Added `IsolatedWebWorker`, `runIsolatedHandler`, `RemoteWorkerError`.
+
 ## 2.1.0
 - Fixed: an unsendable handler error no longer kills the worker isolate and hangs `compute()` — it is delivered as a `RemoteError` fallback.
 - Fixed: worker isolates are monitored via `onExit`/`onError` — unexpected death fails in-flight `compute()` calls with a descriptive error and the pool re-spawns a fresh isolate on the next call.

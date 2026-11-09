@@ -1,8 +1,27 @@
-part of 'isolated_stream_base.dart';
+import 'dart:async';
+import 'dart:isolate';
+
+import 'handler.dart';
+import 'runner.dart';
+
+/// A runner of [handler] in a background isolate.
+HandlerRunner<T, E> spawnRunner<T, E>(IsolatedHandler<T, E> handler) =>
+    _IsolateRunner<T, E>(handler);
+
+/// Serves a handler in a Web Worker: the `main` of a worker script.
+///
+/// [create] builds the handler from the [IsolatedWebWorker.init] the
+/// worker's creator sent. On native platforms handlers run in isolates,
+/// so this throws [UnsupportedError]; see the web version for what can
+/// cross to a worker.
+void runIsolatedHandler<T, E>(
+  IsolatedHandler<T, E> Function(Object? init) create,
+) =>
+    throw UnsupportedError('runIsolatedHandler runs only in a Web Worker');
 
 /// Owns a single worker isolate: spawning, request/reply routing, teardown.
-class _IsolateWrapper<T, E> {
-  _IsolateWrapper(this._handler) {
+final class _IsolateRunner<T, E> implements HandlerRunner<T, E> {
+  _IsolateRunner(this._handler) {
     // Avoids an unhandled async error when spawn fails or kill() runs
     // before the first compute() awaits _ready.
     _ready.future.ignore();
@@ -20,7 +39,7 @@ class _IsolateWrapper<T, E> {
   final Completer<void> _ready = Completer<void>();
   final Map<ReceivePort, Completer<E>> _openReplies = {};
 
-  /// Whether the isolate terminated on its own (not via [kill]).
+  @override
   bool get isDead => _dead;
 
   Future<void> _spawn() async {
@@ -135,6 +154,7 @@ class _IsolateWrapper<T, E> {
     }
   }
 
+  @override
   Future<E> compute(T value) async {
     await _ready.future;
 
@@ -184,6 +204,7 @@ class _IsolateWrapper<T, E> {
     return completer.future;
   }
 
+  @override
   void kill() {
     if (_killed) return;
     _killed = true;
@@ -201,4 +222,55 @@ class _IsolateWrapper<T, E> {
 
     _failReady();
   }
+}
+
+void _isolateEntry<S, R>(_IsolateInitMessage<S, R> init) {
+  final requests = ReceivePort();
+  init.handshake.send(requests.sendPort);
+
+  requests.listen((dynamic msg) async {
+    if (msg is! _Req<S>) return;
+    final req = msg;
+
+    try {
+      final result = init.handler.compute(req.value);
+      if (result is Future<R>) {
+        final v = await result;
+        req.replyTo.send(_OkMessage<R>(v));
+      } else {
+        req.replyTo.send(_OkMessage<R>(result));
+      }
+    } catch (e, st) {
+      // The error itself may be unsendable; fall back to a RemoteError.
+      try {
+        req.replyTo.send(_ErrorMessage(e, st));
+      } catch (_) {
+        final error = RemoteError(e.toString(), st.toString());
+        req.replyTo.send(_ErrorMessage(error, error.stackTrace));
+      }
+    }
+  });
+}
+
+class _IsolateInitMessage<S, R> {
+  _IsolateInitMessage(this.handshake, this.handler);
+  final SendPort handshake;
+  final IsolatedHandler<S, R> handler;
+}
+
+class _Req<T> {
+  _Req(this.value, this.replyTo);
+  final T value;
+  final SendPort replyTo;
+}
+
+class _OkMessage<T> {
+  _OkMessage(this.value);
+  final T value;
+}
+
+class _ErrorMessage {
+  _ErrorMessage(this.error, this.stackTrace);
+  final Object error;
+  final StackTrace stackTrace;
 }
