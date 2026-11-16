@@ -117,6 +117,21 @@ class MovingHandler extends IsolatedHandler<int, Object?> {
       IsolatedWebWorker(script, init: ['moving']);
 }
 
+/// Sums the bytes it is sent, moving their buffer to the worker.
+class TakingHandler extends IsolatedHandler<Object?, int> {
+  @override
+  int compute(Object? value) =>
+      (value as Uint8List).fold(0, (sum, byte) => sum + byte);
+
+  @override
+  List<ByteBuffer> transferOfInput(Object? input) =>
+      [(input as Uint8List).buffer];
+
+  @override
+  IsolatedWebWorker get webWorker =>
+      IsolatedWebWorker(script, init: ['taking']);
+}
+
 /// Returns what cannot cross to the page.
 class UnsendableHandler extends IsolatedHandler<int, Object?> {
   @override
@@ -171,6 +186,8 @@ IsolatedHandler<dynamic, dynamic> handlerFor(Object? init) {
       return HalfHandler();
     case 'moving':
       return MovingHandler();
+    case 'taking':
+      return TakingHandler();
     case 'unsendable':
       return UnsendableHandler();
   }

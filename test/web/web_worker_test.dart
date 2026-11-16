@@ -1,6 +1,8 @@
 @TestOn('browser')
 library;
 
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
 import 'package:isolated_stream/isolated_stream.dart';
@@ -96,6 +98,20 @@ void workerTests() {
     // Moved: gone from the worker; the one not named: still there.
     final held = await worker.compute(-1) as List<Object?>;
     expect(held.take(3), [0, 0, 4]);
+  });
+
+  test('moves the buffers of an input the handler names', () async {
+    final worker = IsolatedWorker<Object?, int>(TakingHandler());
+    addTearDown(worker.dispose);
+    // In JavaScript's memory: the buffer itself moves.
+    final js = Uint8List.fromList([1, 2, 3]).toJS;
+    expect(await worker.compute(js.toDart), 6);
+    expect(js.getProperty<JSNumber>('byteLength'.toJS).toDartInt, 0);
+    // Made in Dart: compiled to WebAssembly a copy moves and the bytes
+    // stay; compiled to JavaScript they are JavaScript's and move.
+    final dart = Uint8List.fromList([4, 5]);
+    expect(await worker.compute(dart), 9);
+    expect(dart.length, const bool.fromEnvironment('dart.tool.dart2wasm') ? 2 : 0);
   });
 
   test('passes lists, maps and numbers', () async {

@@ -1,3 +1,6 @@
+## 3.0.0-dev.4
+- Added `IsolatedHandler.transferOfInput`: the buffers of a call's input moved to a Web Worker (`postMessage` transfer list) instead of copied. Ignored on the main thread and on native platforms.
+
 ## 3.0.0-dev.3
 - Added `IsolatedHandler.transferOf`: the buffers of a result a Web Worker moves to the caller (`postMessage` transfer list) instead of copying. No effect on native platforms, where the handler's isolate copies a result as it sends it.
 
