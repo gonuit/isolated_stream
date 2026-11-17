@@ -59,6 +59,7 @@ void runIsolatedHandler<T, E>(
   }
 
   _self.onmessage = onMessage.toJS;
+  _self.postMessage(_toJs(_ready, 0, null));
 }
 
 Future<void> _answer(
@@ -114,6 +115,9 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
   bool _dead = false;
   bool _killed = false;
 
+  /// Whether the worker's script has loaded and runs.
+  bool _loaded = false;
+
   @override
   bool get isDead => _dead;
 
@@ -142,6 +146,10 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
   void _onMessage(_MessageEvent event) {
     final [kind as int, id as int, payload, remoteStack] =
         _fromJs(event.data) as List<Object?>;
+    if (kind == _ready) {
+      _loaded = true;
+      return;
+    }
     final call = _calls.remove(id);
     if (call == null) return;
     if (kind == _ok) {
@@ -163,11 +171,10 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
     _dead = true;
     _stop();
     final reason = event.message;
-    _failAll(RemoteWorkerError(
-      reason == null || reason.isEmpty
-          ? 'Web Worker $_script failed to load'
-          : 'Web Worker $_script failed: $reason',
-    ));
+    final message = reason == null || reason.isEmpty
+        ? 'Web Worker $_script failed to load'
+        : 'Web Worker $_script failed: $reason';
+    _failAll(_loaded ? RemoteWorkerError(message) : WorkerLoadError(message));
   }
 
   /// A message from the worker could not be read: the worker is not
@@ -303,6 +310,7 @@ const _init = 0;
 const _call = 1;
 const _ok = 2;
 const _error = 3;
+const _ready = 4;
 
 /// Every message, either way: `[kind, id, payload, stackTrace]`. The
 /// buffers of [moved] it holds go to [transfer], to move with it.

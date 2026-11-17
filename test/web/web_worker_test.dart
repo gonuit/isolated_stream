@@ -174,10 +174,22 @@ void workerTests() {
 
     await expectLater(
       worker.compute(1),
-      throwsA(isA<RemoteWorkerError>()
+      throwsA(isA<WorkerLoadError>()
           .having((e) => e.message, 'message', contains('missing'))),
     );
-    await expectLater(worker.compute(1), throwsA(isA<RemoteWorkerError>()));
+    await expectLater(worker.compute(1), throwsA(isA<WorkerLoadError>()));
+  });
+
+  test('fails calls of a worker failing after it loaded, not as a load error',
+      () async {
+    final worker = IsolatedWorker<int, int>(CrashingHandler());
+    addTearDown(worker.dispose);
+
+    await expectLater(
+      worker.compute(1),
+      throwsA(isA<RemoteWorkerError>()
+          .having((e) => e, 'error', isNot(isA<WorkerLoadError>()))),
+    );
   });
 
   test('fails calls when the worker cannot build the handler', () async {
