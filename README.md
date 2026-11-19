@@ -232,6 +232,7 @@ Values cross by structured clone:
 - `null`, `bool`, numbers, `String`, typed data, `List`, `Map` with `String` keys; anything else throws `ArgumentError`
 - lists and maps arrive as `List<Object?>` / `Map<Object?, Object?>`; whole numbers as `int` unless a `double` is expected
 - handler errors arrive as `RemoteWorkerError` (message + stack trace)
+- a worker that does not start (its script does not load; natively, an isolate that cannot spawn) fails its calls with `WorkerLoadError`, a `RemoteWorkerError`
 - on a Wasm page, typed data from a worker stays in JS memory: cheap to pass on, slow to read per element; copy with `Uint8List.fromList` before heavy reads
 - large results: name their buffers in `transferOf` to move them instead of copying (the worker must not use them after; a Wasm worker copies bytes from Dart memory to JS once, then moves that copy):
   ```dart
