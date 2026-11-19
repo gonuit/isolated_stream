@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
@@ -142,6 +143,19 @@ class UnsendableHandler extends IsolatedHandler<int, Object?> {
       IsolatedWebWorker(script, init: ['unsendable']);
 }
 
+/// Fails its worker, after it loaded, with an error no call catches.
+class CrashingHandler extends IsolatedHandler<int, int> {
+  @override
+  Future<int> compute(int value) {
+    Future<void>(() => throw StateError('Crashed'));
+    return Completer<int>().future;
+  }
+
+  @override
+  IsolatedWebWorker get webWorker =>
+      IsolatedWebWorker(script, init: ['crashing']);
+}
+
 /// Names a worker script that does not exist.
 class MissingWorkerHandler extends IsolatedHandler<int, int> {
   @override
@@ -190,6 +204,8 @@ IsolatedHandler<dynamic, dynamic> handlerFor(Object? init) {
       return TakingHandler();
     case 'unsendable':
       return UnsendableHandler();
+    case 'crashing':
+      return CrashingHandler();
   }
   throw ArgumentError.value(name, 'init', 'Unknown handler');
 }

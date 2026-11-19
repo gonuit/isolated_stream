@@ -102,7 +102,7 @@ final class _IsolateRunner<T, E> implements HandlerRunner<T, E> {
       _closeMonitorPort();
       _closeHandshake();
       if (!_ready.isCompleted) {
-        _ready.completeError(e, st);
+        _ready.completeError(WorkerLoadError('$e', '$st'), st);
       }
     }
   }

@@ -138,3 +138,9 @@ final class RemoteWorkerError extends Error {
   @override
   String toString() => message;
 }
+
+/// A worker that did not start: an isolate that could not be spawned, or a
+/// Web Worker whose script did not load. A handler's own errors are never one.
+final class WorkerLoadError extends RemoteWorkerError {
+  WorkerLoadError(super.message, [super.stackTrace]);
+}
