@@ -31,6 +31,28 @@ abstract class IsolatedHandler<T, E> {
   /// Optional name for debugging and isolate identification.
   final String? debugName;
 
+  /// Called once where the handler runs, before any [compute] call is
+  /// processed. Override it to build per-worker state (load a model, open a
+  /// database, warm caches).
+  ///
+  /// The hook is awaited: no computation starts until it completes. It runs
+  /// once per isolate or Web Worker — again after a crash re-spawn or an
+  /// idle shutdown, and once per worker in a pool. On the web's main thread
+  /// the handler is shared by its pools, so it runs once for all of them.
+  /// If it throws, pending `compute()` calls fail with that error and the
+  /// next call starts a fresh worker and retries [onInit].
+  FutureOr<void> onInit() {}
+
+  /// Called where the handler runs on graceful shutdown — explicit disposal
+  /// or an idle shutdown. Override it to release per-worker resources.
+  ///
+  /// Best-effort: errors are ignored, and the hook is skipped when the
+  /// worker crashed, never finished initializing, or cannot process the
+  /// shutdown request within `shutdownTimeout` (e.g. blocked by synchronous
+  /// work). It may run while abandoned computations are still executing;
+  /// their results are discarded.
+  FutureOr<void> onDispose() {}
+
   /// Transforms a value of type [T] to type [E] in an isolate.
   ///
   /// This method is called in the isolate for each stream element.

@@ -9,6 +9,10 @@ abstract interface class HandlerRunner<T, E> {
   /// Whether it stopped on its own (not by [kill]) and cannot be used.
   bool get isDead;
 
-  /// Stops it. Calls in flight fail with a [StateError].
+  /// Stops it. Calls in flight fail with a [StateError]; the handler's
+  /// `onDispose` runs if it can within the runner's shutdown timeout.
   void kill();
 }
+
+/// How long a runner gets to run `onDispose` and stop before it is killed.
+const Duration defaultShutdownTimeout = Duration(seconds: 2);

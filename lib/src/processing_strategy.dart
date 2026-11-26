@@ -40,9 +40,13 @@ abstract interface class IsolatedProcessingStrategy {
   ///   when the next event arrives.
   /// - [onIdleShutdown]: Optional callback invoked after each idle shutdown.
   ///   Not called on explicit disposal.
+  /// - [shutdownTimeout]: How long the isolate gets to run
+  ///   [IsolatedHandler.onDispose] and exit on shutdown before being killed
+  ///   (default: 2s).
   const factory IsolatedProcessingStrategy.sequential({
     Duration? idleTimeout,
     void Function()? onIdleShutdown,
+    Duration shutdownTimeout,
   }) = SequentialProcessingStrategy;
 
   /// Creates a restartable processing strategy that cancels previous operations
@@ -70,6 +74,7 @@ abstract interface class IsolatedProcessingStrategy {
     int isolates,
     Duration? idleTimeout,
     void Function()? onIdleShutdown,
+    Duration shutdownTimeout,
   }) = RestartableProcessingStrategy;
 
   /// Creates a droppable processing strategy that drops new events when at
@@ -98,6 +103,7 @@ abstract interface class IsolatedProcessingStrategy {
     int isolates,
     Duration? idleTimeout,
     void Function()? onIdleShutdown,
+    Duration shutdownTimeout,
   }) = DroppableProcessingStrategy;
 
   /// Creates a concurrent processing strategy that processes multiple elements
@@ -124,6 +130,7 @@ abstract interface class IsolatedProcessingStrategy {
     int isolates,
     Duration? idleTimeout,
     void Function()? onIdleShutdown,
+    Duration shutdownTimeout,
   }) = ConcurrentProcessingStrategy;
 
   /// Processes elements from [source] using [handler], emitting results and
@@ -213,12 +220,17 @@ class SequentialProcessingStrategy implements IsolatedProcessingStrategy {
   /// explicit disposal.
   final void Function()? onIdleShutdown;
 
+  /// How long isolates get to run [IsolatedHandler.onDispose] and exit on
+  /// shutdown before being killed. [Duration.zero] kills immediately.
+  final Duration shutdownTimeout;
+
   /// Creates a new sequential processing strategy.
   ///
   /// This strategy uses a single isolate and processes elements one at a time.
   const SequentialProcessingStrategy({
     this.idleTimeout,
     this.onIdleShutdown,
+    this.shutdownTimeout = defaultShutdownTimeout,
   });
 
   @override
@@ -232,6 +244,7 @@ class SequentialProcessingStrategy implements IsolatedProcessingStrategy {
       1,
       idleTimeout: idleTimeout,
       onIdleShutdown: onIdleShutdown,
+      shutdownTimeout: shutdownTimeout,
     );
     final policy = _SequentialPolicy<T, E>(pool.run);
     final subscription = source.listen(
@@ -300,6 +313,10 @@ class DroppableProcessingStrategy implements IsolatedProcessingStrategy {
   /// explicit disposal.
   final void Function()? onIdleShutdown;
 
+  /// How long isolates get to run [IsolatedHandler.onDispose] and exit on
+  /// shutdown before being killed. [Duration.zero] kills immediately.
+  final Duration shutdownTimeout;
+
   /// Creates a new droppable processing strategy.
   ///
   /// Throws [ArgumentError] if [isolates] or [concurrency] is less than 1.
@@ -308,6 +325,7 @@ class DroppableProcessingStrategy implements IsolatedProcessingStrategy {
     this.concurrency = 1,
     this.idleTimeout,
     this.onIdleShutdown,
+    this.shutdownTimeout = defaultShutdownTimeout,
   }) {
     if (isolates < 1) {
       throw ArgumentError.value(isolates, 'isolates', 'Must be at least 1');
@@ -329,6 +347,7 @@ class DroppableProcessingStrategy implements IsolatedProcessingStrategy {
       isolates,
       idleTimeout: idleTimeout,
       onIdleShutdown: onIdleShutdown,
+      shutdownTimeout: shutdownTimeout,
     );
 
     final activeEvents = <int, _EventResult<S, R>>{};
@@ -453,6 +472,10 @@ class RestartableProcessingStrategy implements IsolatedProcessingStrategy {
   /// explicit disposal.
   final void Function()? onIdleShutdown;
 
+  /// How long isolates get to run [IsolatedHandler.onDispose] and exit on
+  /// shutdown before being killed. [Duration.zero] kills immediately.
+  final Duration shutdownTimeout;
+
   /// Creates a new restartable processing strategy.
   ///
   /// Throws [ArgumentError] if [isolates] or [concurrency] is less than 1.
@@ -461,6 +484,7 @@ class RestartableProcessingStrategy implements IsolatedProcessingStrategy {
     this.concurrency = 1,
     this.idleTimeout,
     this.onIdleShutdown,
+    this.shutdownTimeout = defaultShutdownTimeout,
   }) {
     if (isolates < 1) {
       throw ArgumentError.value(isolates, 'isolates', 'Must be at least 1');
@@ -482,6 +506,7 @@ class RestartableProcessingStrategy implements IsolatedProcessingStrategy {
       isolates,
       idleTimeout: idleTimeout,
       onIdleShutdown: onIdleShutdown,
+      shutdownTimeout: shutdownTimeout,
     );
 
     final activeEvents = <int, _EventResult<S, R>>{};
@@ -605,6 +630,10 @@ class ConcurrentProcessingStrategy implements IsolatedProcessingStrategy {
   /// explicit disposal.
   final void Function()? onIdleShutdown;
 
+  /// How long isolates get to run [IsolatedHandler.onDispose] and exit on
+  /// shutdown before being killed. [Duration.zero] kills immediately.
+  final Duration shutdownTimeout;
+
   /// Creates a new concurrent processing strategy.
   ///
   /// Throws [ArgumentError] if [concurrency] or [isolates] is less than 1.
@@ -613,6 +642,7 @@ class ConcurrentProcessingStrategy implements IsolatedProcessingStrategy {
     this.isolates = 1,
     this.idleTimeout,
     this.onIdleShutdown,
+    this.shutdownTimeout = defaultShutdownTimeout,
   }) {
     if (concurrency < 1) {
       throw ArgumentError.value(
@@ -634,6 +664,7 @@ class ConcurrentProcessingStrategy implements IsolatedProcessingStrategy {
       isolates,
       idleTimeout: idleTimeout,
       onIdleShutdown: onIdleShutdown,
+      shutdownTimeout: shutdownTimeout,
     );
     final subscription = source.listen(
       null,

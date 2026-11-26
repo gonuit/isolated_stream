@@ -5,8 +5,11 @@ import 'handler.dart';
 import 'runner.dart';
 
 /// A runner of [handler] in a background isolate.
-HandlerRunner<T, E> spawnRunner<T, E>(IsolatedHandler<T, E> handler) =>
-    _IsolateRunner<T, E>(handler);
+HandlerRunner<T, E> spawnRunner<T, E>(
+  IsolatedHandler<T, E> handler, {
+  required Duration shutdownTimeout,
+}) =>
+    _IsolateRunner<T, E>(handler, shutdownTimeout: shutdownTimeout);
 
 /// Serves a handler in a Web Worker: the `main` of a worker script.
 ///
@@ -21,7 +24,8 @@ void runIsolatedHandler<T, E>(
 
 /// Owns a single worker isolate: spawning, request/reply routing, teardown.
 final class _IsolateRunner<T, E> implements HandlerRunner<T, E> {
-  _IsolateRunner(this._handler) {
+  _IsolateRunner(this._handler, {required Duration shutdownTimeout})
+      : _shutdownTimeout = shutdownTimeout {
     // Avoids an unhandled async error when spawn fails or kill() runs
     // before the first compute() awaits _ready.
     _ready.future.ignore();
@@ -29,6 +33,7 @@ final class _IsolateRunner<T, E> implements HandlerRunner<T, E> {
   }
 
   final IsolatedHandler<T, E> _handler;
+  final Duration _shutdownTimeout;
 
   bool _killed = false;
   bool _dead = false;
@@ -36,6 +41,7 @@ final class _IsolateRunner<T, E> implements HandlerRunner<T, E> {
   SendPort? _requestPort;
   ReceivePort? _handshake;
   ReceivePort? _monitorPort;
+  Timer? _shutdownTimer;
   final Completer<void> _ready = Completer<void>();
   final Map<ReceivePort, Completer<E>> _openReplies = {};
 
@@ -50,6 +56,12 @@ final class _IsolateRunner<T, E> implements HandlerRunner<T, E> {
     // onError delivers [errorDescription, stackDescription], onExit null;
     // with errorsAreFatal both mean the isolate is gone.
     monitor.listen((dynamic message) {
+      if (_killed) {
+        _shutdownTimer?.cancel();
+        _shutdownTimer = null;
+        _closeMonitorPort();
+        return;
+      }
       if (message is List && message.length == 2) {
         _onIsolateDeath(RemoteError('${message[0]}', '${message[1] ?? ''}'));
       } else {
@@ -78,9 +90,9 @@ final class _IsolateRunner<T, E> implements HandlerRunner<T, E> {
 
       // kill() and _onIsolateDeath() close the handshake port, making
       // `first` throw so this method can unwind.
-      final SendPort sendPort;
+      final Object? first;
       try {
-        sendPort = await handshake.first as SendPort;
+        first = await handshake.first;
       } catch (_) {
         _closeHandshake();
         _failReady();
@@ -89,12 +101,19 @@ final class _IsolateRunner<T, E> implements HandlerRunner<T, E> {
 
       _closeHandshake();
 
+      if (first is _ErrorMessage) {
+        if (!_ready.isCompleted) {
+          _ready.completeError(first.error, first.stackTrace);
+        }
+        return;
+      }
+
       if (_killed) {
         _failReady();
         return;
       }
 
-      _requestPort = sendPort;
+      _requestPort = first as SendPort;
       if (!_ready.isCompleted) {
         _ready.complete();
       }
@@ -214,21 +233,54 @@ final class _IsolateRunner<T, E> implements HandlerRunner<T, E> {
     );
 
     _closeHandshake();
-    _closeMonitorPort();
 
-    _isolate?.kill(priority: Isolate.immediate);
+    final isolate = _isolate;
+    final requestPort = _requestPort;
     _isolate = null;
     _requestPort = null;
-
     _failReady();
+
+    if (isolate == null ||
+        requestPort == null ||
+        _shutdownTimeout == Duration.zero) {
+      _closeMonitorPort();
+      isolate?.kill(priority: Isolate.immediate);
+      return;
+    }
+
+    requestPort.send(const _Shutdown());
+    _shutdownTimer = Timer(_shutdownTimeout, () {
+      _shutdownTimer = null;
+      isolate.kill(priority: Isolate.immediate);
+      _closeMonitorPort();
+    });
   }
 }
 
-void _isolateEntry<S, R>(_IsolateInitMessage<S, R> init) {
+Future<void> _isolateEntry<S, R>(_IsolateInitMessage<S, R> init) async {
+  try {
+    await init.handler.onInit();
+  } catch (e, st) {
+    try {
+      init.handshake.send(_ErrorMessage(e, st));
+    } catch (_) {
+      final error = RemoteError(e.toString(), st.toString());
+      init.handshake.send(_ErrorMessage(error, error.stackTrace));
+    }
+    return;
+  }
+
   final requests = ReceivePort();
   init.handshake.send(requests.sendPort);
 
   requests.listen((dynamic msg) async {
+    if (msg is _Shutdown) {
+      requests.close();
+      try {
+        await init.handler.onDispose();
+      } catch (_) {}
+      return;
+    }
     if (msg is! _Req<S>) return;
     final req = msg;
 
@@ -273,4 +325,8 @@ class _ErrorMessage {
   _ErrorMessage(this.error, this.stackTrace);
   final Object error;
   final StackTrace stackTrace;
+}
+
+class _Shutdown {
+  const _Shutdown();
 }

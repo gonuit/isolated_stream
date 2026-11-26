@@ -55,6 +55,11 @@ class IsolatedWorker<T, E> {
   /// transparently re-spawns them. [onIdleShutdown], if provided, is
   /// called after each idle shutdown (not on explicit [dispose]).
   ///
+  /// [shutdownTimeout] (default: 2 seconds) bounds graceful shutdown: on
+  /// [dispose] or an idle shutdown the worker isolates get that long to run
+  /// [IsolatedHandler.onDispose] and exit before being killed.
+  /// [Duration.zero] skips graceful shutdown and kills immediately.
+  ///
   /// Throws [ArgumentError] if [isolates] or [concurrency] is less than 1.
   IsolatedWorker(
     IsolatedHandler<T, E> handler, {
@@ -62,6 +67,7 @@ class IsolatedWorker<T, E> {
     int? concurrency,
     Duration? idleTimeout,
     void Function()? onIdleShutdown,
+    Duration shutdownTimeout = defaultShutdownTimeout,
   }) {
     if (isolates < 1) {
       throw ArgumentError.value(isolates, 'isolates', 'Must be at least 1');
@@ -75,6 +81,7 @@ class IsolatedWorker<T, E> {
       isolates,
       idleTimeout: idleTimeout,
       onIdleShutdown: onIdleShutdown,
+      shutdownTimeout: shutdownTimeout,
     );
     if (concurrency == 1) {
       _policy = _SequentialPolicy<T, E>(_pool.run);
@@ -111,9 +118,11 @@ class IsolatedWorker<T, E> {
     }
   }
 
-  /// Kills all worker isolates and releases resources. Any in-flight
-  /// [compute] calls will complete with a [StateError]. The instance must
-  /// not be used after calling [dispose].
+  /// Requests shutdown of all worker isolates and releases resources. Any
+  /// in-flight [compute] calls complete with a [StateError]. Each isolate
+  /// runs [IsolatedHandler.onDispose] and exits asynchronously (typically
+  /// milliseconds, at most `shutdownTimeout`). The instance must not be
+  /// used after calling [dispose].
   void dispose() {
     if (_disposed) return;
     _disposed = true;

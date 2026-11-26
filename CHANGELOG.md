@@ -1,3 +1,8 @@
+## 3.0.0-dev.7
+- Added `onInit`/`onDispose` lifecycle hooks on `IsolatedHandler`: awaited per-worker setup before the first `compute()` and best-effort cleanup on graceful shutdown, on native and web.
+- Changed: `dispose()` and idle shutdown now shut workers down gracefully (running `onDispose`); the new `shutdownTimeout` parameter (default 2s, `Duration.zero` = immediate kill) bounds it on `IsolatedWorker` and all strategies.
+- Rebuild web workers (`dart run isolated_stream:build`): ones built with an earlier version run neither hook.
+
 ## 3.0.0-dev.6
 - Fixed: a Wasm worker now loads relative to the page's `<base href>`, like a JS one; it failed to load on nested routes (e.g. Flutter's path URL strategy).
 - Fixed: browsers without `WebAssembly` fall back to the JS worker instead of failing every call.

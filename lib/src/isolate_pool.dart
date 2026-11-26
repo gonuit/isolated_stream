@@ -6,14 +6,17 @@ class _IsolatePool<T, E> {
     this._maxSize, {
     Duration? idleTimeout,
     void Function()? onIdleShutdown,
+    Duration shutdownTimeout = defaultShutdownTimeout,
   })  : _idleTimeout = idleTimeout,
-        _onIdleShutdown = onIdleShutdown;
+        _onIdleShutdown = onIdleShutdown,
+        _shutdownTimeout = shutdownTimeout;
 
   final List<HandlerRunner<T, E>> _pool = [];
   final IsolatedHandler<T, E> _handler;
   final int _maxSize;
   final Duration? _idleTimeout;
   final void Function()? _onIdleShutdown;
+  final Duration _shutdownTimeout;
   int _currentIndex = 0;
   int _inFlight = 0;
   Timer? _idleTimer;
@@ -25,7 +28,7 @@ class _IsolatePool<T, E> {
     }
     _pool.removeWhere((runner) => runner.isDead);
     while (_pool.length < _maxSize) {
-      _pool.add(spawnRunner<T, E>(_handler));
+      _pool.add(spawnRunner<T, E>(_handler, shutdownTimeout: _shutdownTimeout));
     }
   }
 

@@ -10,6 +10,7 @@ Make isolates as simple as streams — *or as simple as a function call*. Offloa
 - ⚡ **Configurable concurrency** - Cap in-flight work with a single parameter
 - 🎱 **Isolate pooling** - Distribute work across multiple isolates
 - 💤 **Idle offloading** - Automatically release isolates after inactivity and transparently re-spawn on demand
+- 🔁 **Lifecycle hooks** - `onInit`/`onDispose` for per-isolate setup and cleanup
 - 🎮 **Simple API** - Easy-to-use extension method on streams
 - 🕸️ **Web support** - Web Workers on the web, or the main thread with no setup
 
@@ -26,7 +27,7 @@ This package is perfect for:
 1. **Install this package.**
    ```yaml
    dependencies:
-     isolated_stream: ^3.0.0-dev.6
+     isolated_stream: ^3.0.0-dev.7
    ```
 
 2. **Import it in your Dart file.**
@@ -176,6 +177,31 @@ stream.isolatedMap(
 );
 ```
 
+## 🔁 Lifecycle hooks
+
+Override `onInit` to build per-isolate state before any computation runs (load a model, open a database, warm caches) and `onDispose` to release it on shutdown. `onInit` is awaited — no `compute` starts until it completes — and runs once per spawned isolate: N times for a pool of N, and again after an idle shutdown or crash re-spawn. If `onInit` throws, pending `compute()` calls fail with that error.
+
+```dart
+class DictionaryHandler extends IsolatedHandler<String, bool> {
+  Set<String>? _words;
+
+  @override
+  Future<void> onInit() async {
+    _words = await loadDictionary(); // runs once, inside the isolate
+  }
+
+  @override
+  void onDispose() {
+    _words = null; // release resources on shutdown
+  }
+
+  @override
+  bool compute(String word) => _words!.contains(word);
+}
+```
+
+On `dispose()` or an idle shutdown, isolates shut down gracefully: `onDispose` runs (best-effort, errors ignored) and the isolate exits, with a hard kill after `shutdownTimeout` (default: 2s) as a fallback. Pass `shutdownTimeout: Duration.zero` to skip graceful shutdown and kill immediately.
+
 ## 🌐 Async operations
 
 Async operations work seamlessly:
@@ -232,6 +258,7 @@ Values cross by structured clone:
 - `null`, `bool`, numbers, `String`, typed data, `List`, `Map` with `String` keys; anything else throws `ArgumentError`
 - lists and maps arrive as `List<Object?>` / `Map<Object?, Object?>`; whole numbers as `int` unless a `double` is expected
 - handler errors arrive as `RemoteWorkerError` (message + stack trace)
+- `onInit`/`onDispose` run in each worker; on the main thread the handler is shared, so they run once for all its pools
 - a worker that does not start (its script does not load; natively, an isolate that cannot spawn) fails its calls with `WorkerLoadError`, a `RemoteWorkerError`
 - on a Wasm page, typed data from a worker stays in JS memory: cheap to pass on, slow to read per element; copy with `Uint8List.fromList` before heavy reads
 - large results: name their buffers in `transferOf` to move them instead of copying (the worker must not use them after; a Wasm worker copies bytes from Dart memory to JS once, then moves that copy):
@@ -298,7 +325,7 @@ stream.isolatedMap(
 - **`droppable(concurrency, isolates)`** — Drop events when busy
 - **`restartable(concurrency, isolates)`** — Cancel previous work for new events
 
-All four accept optional `idleTimeout` and `onIdleShutdown`.
+All four accept optional `idleTimeout`, `onIdleShutdown`, and `shutdownTimeout`.
 
 **Returns**: `Stream<E>` with transformed elements in input order.
 
@@ -310,6 +337,7 @@ final worker = IsolatedWorker<T, E>(
   concurrency: null,  // null = unbounded; 1 = sequential; N = bounded
   idleTimeout: null,  // optional: release isolates after inactivity
   onIdleShutdown: null,
+  shutdownTimeout: const Duration(seconds: 2), // graceful shutdown bound
 );
 
 final result = await worker.compute(value); // Future<E>
