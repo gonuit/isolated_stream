@@ -12,7 +12,8 @@ import 'runner.dart';
 HandlerRunner<T, E> spawnRunner<T, E>(IsolatedHandler<T, E> handler) {
   final worker = handler.webWorker;
   if (worker != null && globalContext.has('Worker')) {
-    return _WorkerRunner<T, E>(_compiled(worker.script), worker.init);
+    return _WorkerRunner<T, E>(
+        _compiled(worker.script), worker.init, handler.transferOfInput);
   }
   return _InPlaceRunner<T, E>(handler);
 }
@@ -58,6 +59,7 @@ void runIsolatedHandler<T, E>(
   }
 
   _self.onmessage = onMessage.toJS;
+  _self.postMessage(_toJs(_ready, 0, null));
 }
 
 Future<void> _answer(
@@ -84,7 +86,7 @@ Future<void> _answer(
 }
 
 final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
-  _WorkerRunner(this._script, Object? init)
+  _WorkerRunner(this._script, Object? init, this._transferOfInput)
       : _bootstrap = _wasmBootstrap(_script) {
     try {
       _worker = switch (_bootstrap) {
@@ -103,6 +105,7 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
   }
 
   final String _script;
+  final List<ByteBuffer> Function(T input) _transferOfInput;
 
   /// The object URL of a WebAssembly worker's bootstrap module.
   final String? _bootstrap;
@@ -111,6 +114,9 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
   int _nextId = 0;
   bool _dead = false;
   bool _killed = false;
+
+  /// Whether the worker's script has loaded and runs.
+  bool _loaded = false;
 
   @override
   bool get isDead => _dead;
@@ -126,7 +132,10 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
     final id = _nextId++;
     final call = Completer<E>();
     try {
-      _worker!.postMessage(_toJs(_call, id, value));
+      final transfer = <JSArrayBuffer>[];
+      final message = _toJs(_call, id, value,
+          moved: _transferOfInput(value), transfer: transfer);
+      _worker!.postMessage(message, transfer.toJS);
     } catch (error, stackTrace) {
       return Future.error(error, stackTrace);
     }
@@ -137,6 +146,10 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
   void _onMessage(_MessageEvent event) {
     final [kind as int, id as int, payload, remoteStack] =
         _fromJs(event.data) as List<Object?>;
+    if (kind == _ready) {
+      _loaded = true;
+      return;
+    }
     final call = _calls.remove(id);
     if (call == null) return;
     if (kind == _ok) {
@@ -158,11 +171,10 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
     _dead = true;
     _stop();
     final reason = event.message;
-    _failAll(RemoteWorkerError(
-      reason == null || reason.isEmpty
-          ? 'Web Worker $_script failed to load'
-          : 'Web Worker $_script failed: $reason',
-    ));
+    final message = reason == null || reason.isEmpty
+        ? 'Web Worker $_script failed to load'
+        : 'Web Worker $_script failed: $reason';
+    _failAll(_loaded ? RemoteWorkerError(message) : WorkerLoadError(message));
   }
 
   /// A message from the worker could not be read: the worker is not
@@ -298,6 +310,7 @@ const _init = 0;
 const _call = 1;
 const _ok = 2;
 const _error = 3;
+const _ready = 4;
 
 /// Every message, either way: `[kind, id, payload, stackTrace]`. The
 /// buffers of [moved] it holds go to [transfer], to move with it.
@@ -405,7 +418,7 @@ Object? _wholeNumbers(Object? value) => switch (value) {
 @JS('Worker')
 extension type _Worker._(JSObject _) implements JSObject {
   external factory _Worker(JSString url, [_WorkerOptions options]);
-  external void postMessage(JSAny? message);
+  external void postMessage(JSAny? message, [JSArray<JSArrayBuffer> transfer]);
   external void terminate();
   external set onmessage(JSFunction? handler);
   external set onerror(JSFunction? handler);

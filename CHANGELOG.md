@@ -1,3 +1,10 @@
+## 3.0.0-dev.5
+- Added `WorkerLoadError` (a `RemoteWorkerError`): the calls of a worker that did not start fail with it — a Web Worker whose script did not load, an isolate that could not be spawned (was the spawn error). A handler's own errors, and a worker failing after it started, are not one.
+- Workers built with an earlier version report every failure as a `WorkerLoadError`: rebuild them (`dart run isolated_stream:build`).
+
+## 3.0.0-dev.4
+- Added `IsolatedHandler.transferOfInput`: the buffers of a call's input moved to a Web Worker (`postMessage` transfer list) instead of copied. Ignored on the main thread and on native platforms.
+
 ## 3.0.0-dev.3
 - Added `IsolatedHandler.transferOf`: the buffers of a result a Web Worker moves to the caller (`postMessage` transfer list) instead of copying. No effect on native platforms, where the handler's isolate copies a result as it sends it.
 

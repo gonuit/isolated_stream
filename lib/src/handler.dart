@@ -58,6 +58,23 @@ abstract class IsolatedHandler<T, E> {
   /// ```
   List<ByteBuffer> transferOf(E result) => const [];
 
+  /// The buffers of an [input] to move to the Web Worker instead of
+  /// copying them, none by default: the counterpart of [transferOf] for
+  /// calls.
+  ///
+  /// On the web they cross at no cost and are empty on the calling side
+  /// after the call is sent, so the caller must not use them again (a
+  /// buffer the input only views in Dart's memory, compiled to
+  /// WebAssembly, is copied to JavaScript's first and that copy moves).
+  /// Ignored when the handler runs on the main thread and on native
+  /// platforms.
+  ///
+  /// ```dart
+  /// @override
+  /// List<ByteBuffer> transferOfInput(Float32List input) => [input.buffer];
+  /// ```
+  List<ByteBuffer> transferOfInput(T input) => const [];
+
   /// The Web Worker this handler runs in on the web, or null to run it on
   /// the main thread there. Ignored on native platforms, where the handler
   /// itself is sent to an isolate.
@@ -120,4 +137,10 @@ final class RemoteWorkerError extends Error {
 
   @override
   String toString() => message;
+}
+
+/// A worker that did not start: an isolate that could not be spawned, or a
+/// Web Worker whose script did not load. A handler's own errors are never one.
+final class WorkerLoadError extends RemoteWorkerError {
+  WorkerLoadError(super.message, [super.stackTrace]);
 }

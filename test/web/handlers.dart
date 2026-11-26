@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
@@ -117,6 +118,21 @@ class MovingHandler extends IsolatedHandler<int, Object?> {
       IsolatedWebWorker(script, init: ['moving']);
 }
 
+/// Sums the bytes it is sent, moving their buffer to the worker.
+class TakingHandler extends IsolatedHandler<Object?, int> {
+  @override
+  int compute(Object? value) =>
+      (value as Uint8List).fold(0, (sum, byte) => sum + byte);
+
+  @override
+  List<ByteBuffer> transferOfInput(Object? input) =>
+      [(input as Uint8List).buffer];
+
+  @override
+  IsolatedWebWorker get webWorker =>
+      IsolatedWebWorker(script, init: ['taking']);
+}
+
 /// Returns what cannot cross to the page.
 class UnsendableHandler extends IsolatedHandler<int, Object?> {
   @override
@@ -125,6 +141,19 @@ class UnsendableHandler extends IsolatedHandler<int, Object?> {
   @override
   IsolatedWebWorker get webWorker =>
       IsolatedWebWorker(script, init: ['unsendable']);
+}
+
+/// Fails its worker, after it loaded, with an error no call catches.
+class CrashingHandler extends IsolatedHandler<int, int> {
+  @override
+  Future<int> compute(int value) {
+    Future<void>(() => throw StateError('Crashed'));
+    return Completer<int>().future;
+  }
+
+  @override
+  IsolatedWebWorker get webWorker =>
+      IsolatedWebWorker(script, init: ['crashing']);
 }
 
 /// Names a worker script that does not exist.
@@ -171,8 +200,12 @@ IsolatedHandler<dynamic, dynamic> handlerFor(Object? init) {
       return HalfHandler();
     case 'moving':
       return MovingHandler();
+    case 'taking':
+      return TakingHandler();
     case 'unsendable':
       return UnsendableHandler();
+    case 'crashing':
+      return CrashingHandler();
   }
   throw ArgumentError.value(name, 'init', 'Unknown handler');
 }
