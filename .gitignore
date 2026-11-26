@@ -7,3 +7,10 @@
 pubspec.lock
 
 coverage/
+
+# Compiled test workers (tool/test_web.sh).
+test/web/worker.js*
+test/web/worker.wasm*
+test/web/worker.mjs
+test/web/worker.support.js
+test/web/*.deps

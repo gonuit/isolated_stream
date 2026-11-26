@@ -1,3 +1,6 @@
+@TestOn('vm')
+library;
+
 import 'dart:async';
 import 'dart:isolate';
 
@@ -133,7 +136,7 @@ void main() {
       final handler = _UnsendableHandler();
       final worker = IsolatedWorker<int, int>(handler);
       try {
-        await expectLater(worker.compute(1), throwsA(isA<ArgumentError>()));
+        await expectLater(worker.compute(1), throwsA(isA<WorkerLoadError>()));
       } finally {
         worker.dispose();
         handler.port.close();

@@ -1,3 +1,27 @@
+## 3.0.0-dev.6
+- Fixed: a Wasm worker now loads relative to the page's `<base href>`, like a JS one; it failed to load on nested routes (e.g. Flutter's path URL strategy).
+- Fixed: browsers without `WebAssembly` fall back to the JS worker instead of failing every call.
+- Fixed: a worker whose `init` cannot be sent is stopped instead of left running.
+
+## 3.0.0-dev.5
+- Added `WorkerLoadError` (a `RemoteWorkerError`): the calls of a worker that did not start fail with it — a Web Worker whose script did not load, an isolate that could not be spawned (was the spawn error). A handler's own errors, and a worker failing after it started, are not one.
+- Workers built with an earlier version report every failure as a `WorkerLoadError`: rebuild them (`dart run isolated_stream:build`).
+
+## 3.0.0-dev.4
+- Added `IsolatedHandler.transferOfInput`: the buffers of a call's input moved to a Web Worker (`postMessage` transfer list) instead of copied. Ignored on the main thread and on native platforms.
+
+## 3.0.0-dev.3
+- Added `IsolatedHandler.transferOf`: the buffers of a result a Web Worker moves to the caller (`postMessage` transfer list) instead of copying. No effect on native platforms, where the handler's isolate copies a result as it sends it.
+
+## 3.0.0-dev.2
+- Added `dart run isolated_stream:build`: compiles `web/**/*.worker.dart` to JS and Wasm.
+- `IsolatedWebWorker('x.worker')` without an extension loads the Wasm build where supported, JS elsewhere.
+
+## 3.0.0-dev.1
+- **BREAKING CHANGE**: requires Dart 3.3.
+- Web support: a handler runs in a Web Worker if it overrides `webWorker`, else on the main thread.
+- Added `IsolatedWebWorker`, `runIsolatedHandler`, `RemoteWorkerError`.
+
 ## 2.1.0
 - Fixed: an unsendable handler error no longer kills the worker isolate and hangs `compute()` — it is delivered as a `RemoteError` fallback.
 - Fixed: worker isolates are monitored via `onExit`/`onError` — unexpected death fails in-flight `compute()` calls with a descriptive error and the pool re-spawns a fresh isolate on the next call.

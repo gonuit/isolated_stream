@@ -103,7 +103,7 @@ class IsolatedWorker<T, E> {
       return await (_policy?.submit(value) ?? _pool.run(value));
     } catch (_) {
       // A dispose() racing this call surfaces the canonical error instead
-      // of the internal pool/wrapper one.
+      // of the internal pool/runner one.
       if (_disposed) {
         throw StateError('IsolatedWorker has been disposed');
       }
