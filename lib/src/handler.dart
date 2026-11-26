@@ -144,6 +144,7 @@ final class IsolatedWebWorker {
 /// An error thrown by a handler in a Web Worker, or the worker failing,
 /// with the error's text and stack trace.
 final class RemoteWorkerError extends Error {
+  /// An error with the [message] and [stackTrace] text the worker reported.
   RemoteWorkerError(this.message, [String? stackTrace])
       : _stackTrace = stackTrace == null || stackTrace.isEmpty
             ? null
@@ -164,5 +165,6 @@ final class RemoteWorkerError extends Error {
 /// A worker that did not start: an isolate that could not be spawned, or a
 /// Web Worker whose script did not load. A handler's own errors are never one.
 final class WorkerLoadError extends RemoteWorkerError {
+  /// A load failure with the [message] and [stackTrace] text reported.
   WorkerLoadError(super.message, [super.stackTrace]);
 }

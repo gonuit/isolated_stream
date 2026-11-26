@@ -252,7 +252,7 @@ No isolates on the web. With no setup a handler runs on the main thread, so the 
    ```
 3. **Compile:** `dart run isolated_stream:build` (every `web/**/*.worker.dart` → `.js` + `.wasm`; rerun after changes). The browser gets Wasm where supported, JS elsewhere; `multiply.worker.js` / `.wasm` pins one.
 
-Everything else (`isolatedMap`, `IsolatedWorker`, `isolates`, `concurrency`, `idleTimeout`) works as on native, one worker per isolate. Flutter copies `web/` into the build; the handler must not import Flutter.
+Everything else (`isolatedMap`, `IsolatedWorker`, `isolates`, `concurrency`, `idleTimeout`, `shutdownTimeout`) works as on native, one worker per isolate. Flutter copies `web/` into the build; the handler must not import Flutter.
 
 Values cross by structured clone:
 - `null`, `bool`, numbers, `String`, typed data, `List`, `Map` with `String` keys; anything else throws `ArgumentError`
@@ -265,6 +265,11 @@ Values cross by structured clone:
   ```dart
   @override
   List<ByteBuffer> transferOf(Uint8List result) => [result.buffer];
+  ```
+- large inputs: name their buffers in `transferOfInput` the same way (the caller must not use them after the call is sent):
+  ```dart
+  @override
+  List<ByteBuffer> transferOfInput(Float32List input) => [input.buffer];
   ```
 
 ## ⚠️ Important notes

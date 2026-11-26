@@ -23,7 +23,7 @@ class AsyncMultiplyHandler extends IsolatedHandler<int, int> {
   final int factor;
 
   AsyncMultiplyHandler(this.factor)
-      : super(debugName: 'AsyncMultiply by $factor');
+    : super(debugName: 'AsyncMultiply by $factor');
 
   @override
   Future<int> compute(int value) async {
@@ -49,6 +49,32 @@ class DataProcessorHandler
   }
 }
 
+/// Example handler that builds per-isolate state in `onInit`
+class DictionaryHandler extends IsolatedHandler<String, bool> {
+  DictionaryHandler() : super(debugName: 'Dictionary');
+
+  Set<String>? _words;
+
+  @override
+  Future<void> onInit() async {
+    // Runs once in each isolate, before the first compute
+    await Future.delayed(const Duration(milliseconds: 10));
+    _words = {'isolate', 'stream', 'worker'};
+  }
+
+  @override
+  void onDispose() {
+    // Runs on dispose() and on idle shutdown
+    _words = null;
+  }
+
+  @override
+  bool compute(String word) => _words!.contains(word);
+}
+
+// On the web these handlers run on the main thread. To move one to a Web
+// Worker, override `webWorker` and compile the worker script with
+// `dart run isolated_stream:build` (see the README).
 void main() async {
   print('=== Isolated Stream Examples ===\n');
 
@@ -75,6 +101,14 @@ void main() async {
   // Example 6: Complex data processing
   print('\n6. Complex data processing:');
   await complexDataExample();
+
+  // Example 7: Request/response worker
+  print('\n7. Request/response worker:');
+  await workerExample();
+
+  // Example 8: Lifecycle hooks
+  print('\n8. Lifecycle hooks:');
+  await lifecycleExample();
 
   print('\n=== All examples completed ===');
 }
@@ -120,8 +154,14 @@ Future<void> concurrentExample() async {
 
   // Sequential processing
   final stopwatch1 = Stopwatch()..start();
-  final sequential = Stream.fromIterable([1, 2, 3, 4, 5, 6])
-      .isolatedMap(AsyncMultiplyHandler(2));
+  final sequential = Stream.fromIterable([
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+  ]).isolatedMap(AsyncMultiplyHandler(2));
   await sequential.toList();
   stopwatch1.stop();
   print('  Sequential processing took: ${stopwatch1.elapsedMilliseconds}ms');
@@ -171,10 +211,12 @@ Future<void> isolatePoolExample() async {
   await multipleIsolates.toList();
   stopwatch2.stop();
   print(
-      '  Isolate pool (6 concurrent, 3 isolates): ${stopwatch2.elapsedMilliseconds}ms');
+    '  Isolate pool (6 concurrent, 3 isolates): ${stopwatch2.elapsedMilliseconds}ms',
+  );
 
   print(
-      '  Isolate pooling helps distribute work for better resource utilization');
+    '  Isolate pooling helps distribute work for better resource utilization',
+  );
 }
 
 Future<void> complexDataExample() async {
@@ -192,6 +234,40 @@ Future<void> complexDataExample() async {
   final results = await processed.toList();
   for (final result in results) {
     print(
-        '  ${result['name']}: processed at ${result['processed_at']}, hash: ${result['hash']}');
+      '  ${result['name']}: processed at ${result['processed_at']}, hash: ${result['hash']}',
+    );
+  }
+}
+
+Future<void> workerExample() async {
+  final worker = IsolatedWorker<int, bool>(
+    PrimeCheckHandler(),
+    isolates: 2,
+    concurrency: 4,
+  );
+
+  try {
+    print('  97 is prime: ${await worker.compute(97)}');
+
+    final results = await Future.wait([
+      for (final number in [101, 102, 103]) worker.compute(number),
+    ]);
+    print('  [101, 102, 103] are prime: $results');
+  } finally {
+    worker.dispose();
+  }
+}
+
+Future<void> lifecycleExample() async {
+  final worker = IsolatedWorker<String, bool>(DictionaryHandler());
+
+  try {
+    // onInit has completed in the isolate before these are computed
+    for (final word in ['isolate', 'thread']) {
+      print('  "$word" is in the dictionary: ${await worker.compute(word)}');
+    }
+  } finally {
+    // onDispose runs in the isolate, bounded by shutdownTimeout
+    worker.dispose();
   }
 }
