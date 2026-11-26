@@ -125,8 +125,9 @@ class TakingHandler extends IsolatedHandler<Object?, int> {
       (value as Uint8List).fold(0, (sum, byte) => sum + byte);
 
   @override
-  List<ByteBuffer> transferOfInput(Object? input) =>
-      [(input as Uint8List).buffer];
+  List<ByteBuffer> transferOfInput(Object? input) => [
+        (input as Uint8List).buffer,
+      ];
 
   @override
   IsolatedWebWorker get webWorker =>
@@ -174,6 +175,15 @@ class BrokenInitHandler extends IsolatedHandler<int, int> {
   @override
   IsolatedWebWorker get webWorker =>
       IsolatedWebWorker(script, init: ['unknown']);
+}
+
+/// Its init cannot cross to a worker.
+class UnsendableInitHandler extends IsolatedHandler<int, int> {
+  @override
+  int compute(int value) => value;
+
+  @override
+  IsolatedWebWorker get webWorker => IsolatedWebWorker(script, init: () {});
 }
 
 /// Names no worker: runs on the page.

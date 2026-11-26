@@ -44,7 +44,10 @@ void workerTests() {
     final base = _document.createElement('base')..setAttribute('href', page);
     _document.head.append(base);
     _history.replaceState(
-        null, '', Uri.parse(page).resolve('deep/route/page').toString());
+      null,
+      '',
+      Uri.parse(page).resolve('deep/route/page').toString(),
+    );
     addTearDown(() {
       _history.replaceState(null, '', page);
       base.remove();
@@ -61,8 +64,13 @@ void workerTests() {
     addTearDown(worker.dispose);
 
     expect(await worker.compute(2), 6);
-    expect(await Future.wait([for (var i = 0; i < 5; i++) worker.compute(i)]),
-        [0, 3, 6, 9, 12]);
+    expect(await Future.wait([for (var i = 0; i < 5; i++) worker.compute(i)]), [
+      0,
+      3,
+      6,
+      9,
+      12,
+    ]);
     expect(served, 0);
   });
 
@@ -90,9 +98,11 @@ void workerTests() {
 
     await expectLater(
       worker.compute(-1),
-      throwsA(isA<RemoteWorkerError>()
-          .having((e) => e.message, 'message', contains('Negative'))
-          .having((e) => e.stackTrace, 'stackTrace', isNotNull)),
+      throwsA(
+        isA<RemoteWorkerError>()
+            .having((e) => e.message, 'message', contains('Negative'))
+            .having((e) => e.stackTrace, 'stackTrace', isNotNull),
+      ),
     );
     expect(await worker.compute(1), 3);
   });
@@ -129,7 +139,9 @@ void workerTests() {
     final dart = Uint8List.fromList([4, 5]);
     expect(await worker.compute(dart), 9);
     expect(
-        dart.length, const bool.fromEnvironment('dart.tool.dart2wasm') ? 2 : 0);
+      dart.length,
+      const bool.fromEnvironment('dart.tool.dart2wasm') ? 2 : 0,
+    );
   });
 
   test('passes lists, maps and numbers', () async {
@@ -159,8 +171,13 @@ void workerTests() {
 
     await expectLater(
       worker.compute(1),
-      throwsA(isA<RemoteWorkerError>()
-          .having((e) => e.message, 'message', contains('could not be sent'))),
+      throwsA(
+        isA<RemoteWorkerError>().having(
+          (e) => e.message,
+          'message',
+          contains('could not be sent'),
+        ),
+      ),
     );
   });
 
@@ -192,23 +209,35 @@ void workerTests() {
 
     await expectLater(
       worker.compute(1),
-      throwsA(isA<WorkerLoadError>()
-          .having((e) => e.message, 'message', contains('missing'))),
+      throwsA(
+        isA<WorkerLoadError>().having(
+          (e) => e.message,
+          'message',
+          contains('missing'),
+        ),
+      ),
     );
     await expectLater(worker.compute(1), throwsA(isA<WorkerLoadError>()));
   });
 
-  test('fails calls of a worker failing after it loaded, not as a load error',
-      () async {
-    final worker = IsolatedWorker<int, int>(CrashingHandler());
-    addTearDown(worker.dispose);
+  test(
+    'fails calls of a worker failing after it loaded, not as a load error',
+    () async {
+      final worker = IsolatedWorker<int, int>(CrashingHandler());
+      addTearDown(worker.dispose);
 
-    await expectLater(
-      worker.compute(1),
-      throwsA(isA<RemoteWorkerError>()
-          .having((e) => e, 'error', isNot(isA<WorkerLoadError>()))),
-    );
-  });
+      await expectLater(
+        worker.compute(1),
+        throwsA(
+          isA<RemoteWorkerError>().having(
+            (e) => e,
+            'error',
+            isNot(isA<WorkerLoadError>()),
+          ),
+        ),
+      );
+    },
+  );
 
   test('fails calls when the worker cannot build the handler', () async {
     final worker = IsolatedWorker<int, int>(BrokenInitHandler());
@@ -216,9 +245,24 @@ void workerTests() {
 
     await expectLater(
       worker.compute(1),
-      throwsA(isA<RemoteWorkerError>()
-          .having((e) => e.message, 'message', contains('Unknown handler'))),
+      throwsA(
+        isA<RemoteWorkerError>().having(
+          (e) => e.message,
+          'message',
+          contains('Unknown handler'),
+        ),
+      ),
     );
+  });
+
+  test('stops a worker whose init cannot be sent', () async {
+    final terminated = _countTerminatedWorkers();
+    addTearDown(() => terminated.restore());
+    final worker = IsolatedWorker<int, int>(UnsendableInitHandler());
+    addTearDown(worker.dispose);
+
+    await expectLater(worker.compute(1), throwsArgumentError);
+    expect(terminated.count, 1);
   });
 
   test('dispose fails the calls in flight', () async {
@@ -264,6 +308,28 @@ extension type _Location._(JSObject _) implements JSObject {
 extension type _History._(JSObject _) implements JSObject {
   external void replaceState(JSAny? state, String unused, String url);
 }
+
+extension type _TerminatedWorkers._(JSObject _) implements JSObject {
+  external int get count;
+  external void restore();
+}
+
+/// Counts the workers terminated from here on, until `restore`.
+_TerminatedWorkers _countTerminatedWorkers() => _function('''
+  const terminate = Worker.prototype.terminate;
+  const counter = {
+    count: 0,
+    restore: () => Worker.prototype.terminate = terminate,
+  };
+  Worker.prototype.terminate = function () {
+    counter.count++;
+    return terminate.call(this);
+  };
+  return counter;
+''').callAsFunction()! as _TerminatedWorkers;
+
+@JS('Function')
+external JSFunction _function(String body);
 
 @JS('document')
 external _Document get _document;

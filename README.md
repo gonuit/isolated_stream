@@ -26,7 +26,7 @@ This package is perfect for:
 1. **Install this package.**
    ```yaml
    dependencies:
-     isolated_stream: ^3.0.0-dev.2
+     isolated_stream: ^3.0.0-dev.6
    ```
 
 2. **Import it in your Dart file.**
