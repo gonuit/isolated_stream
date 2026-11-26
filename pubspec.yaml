@@ -2,7 +2,7 @@ name: isolated_stream
 description: >-
   Run CPU-intensive work in background isolates, or Web Workers on the web:
   stream transformations and a long-lived worker with a compute-like API.
-version: 3.0.0-dev.7
+version: 3.0.0
 repository: https://github.com/gonuit/isolated_stream
 issue_tracker: https://github.com/gonuit/isolated_stream/issues
 
