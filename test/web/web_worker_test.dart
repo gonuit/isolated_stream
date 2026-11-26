@@ -39,6 +39,23 @@ void main() {
 }
 
 void workerTests() {
+  test('loads from a nested route under a <base href>', () async {
+    final page = _location.href;
+    final base = _document.createElement('base')..setAttribute('href', page);
+    _document.head.append(base);
+    _history.replaceState(
+        null, '', Uri.parse(page).resolve('deep/route/page').toString());
+    addTearDown(() {
+      _history.replaceState(null, '', page);
+      base.remove();
+    });
+
+    final worker = IsolatedWorker<int, int>(ScaleHandler(3));
+    addTearDown(worker.dispose);
+
+    expect(await worker.compute(2), 6);
+  });
+
   test('computes in the worker, not on the page', () async {
     final worker = IsolatedWorker<int, int>(ScaleHandler(3));
     addTearDown(worker.dispose);
@@ -111,7 +128,8 @@ void workerTests() {
     // stay; compiled to JavaScript they are JavaScript's and move.
     final dart = Uint8List.fromList([4, 5]);
     expect(await worker.compute(dart), 9);
-    expect(dart.length, const bool.fromEnvironment('dart.tool.dart2wasm') ? 2 : 0);
+    expect(
+        dart.length, const bool.fromEnvironment('dart.tool.dart2wasm') ? 2 : 0);
   });
 
   test('passes lists, maps and numbers', () async {
@@ -227,3 +245,31 @@ void workerTests() {
     expect(await worker.compute(0), 1);
   });
 }
+
+extension type _Element._(JSObject _) implements JSObject {
+  external void setAttribute(String name, String value);
+  external void append(_Element child);
+  external void remove();
+}
+
+extension type _Document._(JSObject _) implements JSObject {
+  external _Element get head;
+  external _Element createElement(String tag);
+}
+
+extension type _Location._(JSObject _) implements JSObject {
+  external String get href;
+}
+
+extension type _History._(JSObject _) implements JSObject {
+  external void replaceState(JSAny? state, String unused, String url);
+}
+
+@JS('document')
+external _Document get _document;
+
+@JS('location')
+external _Location get _location;
+
+@JS('history')
+external _History get _history;

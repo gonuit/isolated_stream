@@ -1,3 +1,8 @@
+## 3.0.0-dev.6
+- Fixed: a Wasm worker now loads relative to the page's `<base href>`, like a JS one; it failed to load on nested routes (e.g. Flutter's path URL strategy).
+- Fixed: browsers without `WebAssembly` fall back to the JS worker instead of failing every call.
+- Fixed: a worker whose `init` cannot be sent is stopped instead of left running.
+
 ## 3.0.0-dev.5
 - Added `WorkerLoadError` (a `RemoteWorkerError`): the calls of a worker that did not start fail with it — a Web Worker whose script did not load, an isolate that could not be spawned (was the spawn error). A handler's own errors, and a worker failing after it started, are not one.
 - Workers built with an earlier version report every failure as a `WorkerLoadError`: rebuild them (`dart run isolated_stream:build`).

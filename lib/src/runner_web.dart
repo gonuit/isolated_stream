@@ -89,11 +89,12 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
   _WorkerRunner(this._script, Object? init, this._transferOfInput)
       : _bootstrap = _wasmBootstrap(_script) {
     try {
-      _worker = switch (_bootstrap) {
+      final worker = _worker = switch (_bootstrap) {
         final bootstrap? =>
           _Worker(bootstrap.toJS, _WorkerOptions(type: 'module')),
         null => _Worker(_script.toJS),
-      }
+      };
+      worker
         ..onmessage = _onMessage.toJS
         ..onerror = _onError.toJS
         ..onmessageerror = _onMessageError.toJS
@@ -269,7 +270,8 @@ String _compiled(String script) {
 /// Whether the browser has the WebAssembly features `dart compile wasm`
 /// needs (garbage collection and SIMD), checked as its `.support.js` does.
 final bool _runsWasm = _wasm ||
-    _validate([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 95, 1, 120, 0]) &&
+    globalContext.has('WebAssembly') &&
+        _validate([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 95, 1, 120, 0]) &&
         _validate([
           0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, //
           10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11,
@@ -285,8 +287,14 @@ external bool _webAssemblyValidate(JSUint8Array bytes);
 /// module worker starting it with the `.mjs` loader beside it; null for
 /// one compiled to JavaScript. Messages coming while the module loads are
 /// kept and handed to the program once its `main` has run.
+///
+/// The bootstrap is a blob, so it names both by absolute URL: [script]
+/// resolved as the browser resolves a worker's, against the document's
+/// base URL (its `<base href>` if it has one), or the location where
+/// there is no document.
 String? _wasmBootstrap(String script) {
-  final wasm = Uri.base.resolve(script);
+  final base = _document?.baseURI;
+  final wasm = (base == null ? Uri.base : Uri.parse(base)).resolve(script);
   if (!wasm.path.endsWith('.wasm')) return null;
   final loader = wasm.replace(
     path: '${wasm.path.substring(0, wasm.path.length - '.wasm'.length)}.mjs',
@@ -460,3 +468,10 @@ extension type _WorkerScope._(JSObject _) implements JSObject {
 
 @JS('self')
 external _WorkerScope get _self;
+
+extension type _Document._(JSObject _) implements JSObject {
+  external String get baseURI;
+}
+
+@JS('document')
+external _Document? get _document;
