@@ -18,9 +18,12 @@ void main() {
     group('handler with a web worker ($compiled)', () {
       setUp(() => script = compiled);
       workerTests();
+      lifecycleTests(LifecycleHandler.new, page: false);
     });
   }
   group('handler without a web worker', () {
+    lifecycleTests(PageLifecycleHandler.new, page: true);
+
     test('computes on the page', () async {
       final worker = IsolatedWorker<int, int>(PageHandler(), isolates: 2);
       addTearDown(worker.dispose);
@@ -35,6 +38,114 @@ void main() {
           .toList();
       expect(results, [2, 3, 4]);
     });
+  });
+}
+
+var _tags = 0;
+
+void lifecycleTests(
+  LifecycleHandler Function(String tag, {bool fail}) create, {
+  required bool page,
+}) {
+  late String tag;
+  late List<String> events;
+  late Reports received;
+
+  int count(String event) => events.where((e) => e == event).length;
+
+  Future<void> until(bool Function() condition) async {
+    final watch = Stopwatch()..start();
+    while (!condition()) {
+      if (watch.elapsed > const Duration(seconds: 5)) fail('Timed out');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+  }
+
+  setUp(() {
+    tag = 'test${_tags++}';
+    events = [];
+    received = Reports('isolated_stream_test')
+      ..onmessage = (JSObject event) {
+        final [from, what] = (event['data'] as JSString).toDart.split(':');
+        if (from == tag) events.add(what);
+      }.toJS;
+  });
+  tearDown(() => received.close());
+
+  test('awaits onInit before the first call', () async {
+    final worker = IsolatedWorker<int, int>(create(tag));
+    addTearDown(worker.dispose);
+
+    expect(
+        await Future.wait([worker.compute(1), worker.compute(2)]), [101, 102]);
+    await until(() => events.isNotEmpty);
+    expect(events, ['init']);
+  });
+
+  test('runs onInit once per worker, once on the page', () async {
+    final worker = IsolatedWorker<int, int>(create(tag), isolates: 2);
+    addTearDown(worker.dispose);
+
+    for (var i = 0; i < 4; i++) {
+      expect(await worker.compute(i), 100 + i);
+    }
+    await until(() => count('init') == (page ? 1 : 2));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(count('init'), page ? 1 : 2);
+  });
+
+  test('runs onDispose on dispose', () async {
+    final worker = IsolatedWorker<int, int>(create(tag), isolates: 2);
+    expect(
+        await Future.wait([worker.compute(1), worker.compute(2)]), [101, 102]);
+    worker.dispose();
+
+    await until(() => count('dispose') == (page ? 1 : 2));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(count('dispose'), page ? 1 : 2);
+  });
+
+  test('skips onDispose with a zero shutdownTimeout', () async {
+    final worker =
+        IsolatedWorker<int, int>(create(tag), shutdownTimeout: Duration.zero);
+    expect(await worker.compute(1), 101);
+    worker.dispose();
+
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(events, ['init']);
+  });
+
+  test('runs onDispose on idle shutdown and onInit again after', () async {
+    final worker = IsolatedWorker<int, int>(
+      create(tag),
+      idleTimeout: const Duration(milliseconds: 20),
+    );
+    addTearDown(worker.dispose);
+
+    expect(await worker.compute(1), 101);
+    await until(() => count('dispose') == 1);
+    expect(await worker.compute(2), 102);
+    await until(() => count('init') == 2);
+  });
+
+  test('a failed onInit fails the calls waiting and is tried again', () async {
+    final worker = IsolatedWorker<int, int>(create(tag, fail: true));
+    addTearDown(worker.dispose);
+    final failure = throwsA(page
+        ? isA<StateError>()
+        : isA<RemoteWorkerError>()
+            .having((e) => e.message, 'message', contains('init failed'))
+            .having((e) => e, 'error', isNot(isA<WorkerLoadError>())));
+
+    await Future.wait([
+      expectLater(worker.compute(1), failure),
+      expectLater(worker.compute(2), failure),
+    ]);
+    await expectLater(worker.compute(3), failure);
+    await until(() => count('init') == 2);
+    worker.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(count('dispose'), 0);
   });
 }
 

@@ -1,6 +1,8 @@
 name: isolated_stream
-description: A Dart package for running CPU-intensive stream transformations in separate isolates to prevent blocking the main thread.
-version: 3.0.0-dev.6
+description: >-
+  Run CPU-intensive work in background isolates: stream transformations with
+  concurrency strategies and a long-lived worker with a compute-like API.
+version: 3.0.0-dev.7
 homepage: https://github.com/gonuit/isolated_stream
 repository: https://github.com/gonuit/isolated_stream
 issue_tracker: https://github.com/gonuit/isolated_stream/issues
@@ -19,8 +21,8 @@ topics:
   - isolate
   - stream
   - concurrency
-  - performance
-  - async
+  - worker
+  - parallelism
 
 funding:
   - https://www.paypal.com/donate/?hosted_button_id=Z82R98MAR4URE

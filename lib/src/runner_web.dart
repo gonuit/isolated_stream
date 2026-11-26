@@ -9,20 +9,24 @@ import 'runner.dart';
 
 /// A runner of [handler]: in its [IsolatedHandler.webWorker] if it names
 /// one and the browser has workers, on the main thread otherwise.
-HandlerRunner<T, E> spawnRunner<T, E>(IsolatedHandler<T, E> handler) {
+HandlerRunner<T, E> spawnRunner<T, E>(
+  IsolatedHandler<T, E> handler, {
+  required Duration shutdownTimeout,
+}) {
   final worker = handler.webWorker;
   if (worker != null && globalContext.has('Worker')) {
-    return _WorkerRunner<T, E>(
-        _compiled(worker.script), worker.init, handler.transferOfInput);
+    return _WorkerRunner<T, E>(_compiled(worker.script), worker.init,
+        handler.transferOfInput, shutdownTimeout);
   }
-  return _InPlaceRunner<T, E>(handler);
+  return _InPlaceRunner<T, E>(handler, shutdownTimeout);
 }
 
 /// Serves a handler in a Web Worker: the `main` of a worker script.
 ///
 /// [create] builds the handler from the [IsolatedWebWorker.init] the
-/// worker's creator sent, once, before the first call. Call it at the
-/// start of `main`, before any `await`: calls are not received before.
+/// worker's creator sent, once, before the first call, and its `onInit`
+/// is awaited before any call is served. Call it at the start of `main`,
+/// before any `await`: calls are not received before.
 ///
 /// Values crossing to and from a worker are copied by the browser
 /// (structured clone), so they have to be `null`, `bool`, numbers,
@@ -33,46 +37,63 @@ HandlerRunner<T, E> spawnRunner<T, E>(IsolatedHandler<T, E> handler) {
 void runIsolatedHandler<T, E>(
   IsolatedHandler<T, E> Function(Object? init) create,
 ) {
-  IsolatedHandler<T, E>? handler;
-  Object? failure;
-  StackTrace? failureStack;
+  Future<IsolatedHandler<T, E>>? ready;
 
   void onMessage(_MessageEvent event) {
     final [kind as int, id as int, payload, ...] =
         _fromJs(event.data) as List<Object?>;
-    if (kind == _init) {
-      try {
-        handler = create(payload);
-      } catch (error, stackTrace) {
-        failure = error;
-        failureStack = stackTrace;
-      }
-      return;
+    switch (kind) {
+      case _init:
+        ready = _start(create, payload)..ignore();
+      case _shutdown:
+        _self.onmessage = null;
+        _shutDown(ready!);
+      default:
+        _answer(id, ready!, payload);
     }
-    _answer(id, () {
-      final ready = handler;
-      if (ready == null) {
-        Error.throwWithStackTrace(failure!, failureStack!);
-      }
-      return ready.compute(_input(ready, payload) as T);
-    }, (result) => handler!.transferOf(result as E));
   }
 
   _self.onmessage = onMessage.toJS;
   _self.postMessage(_toJs(_ready, 0, null));
 }
 
-Future<void> _answer(
-  int id,
-  FutureOr<Object?> Function() run,
-  List<ByteBuffer> Function(Object? result) transferOf,
+/// The handler [create] builds from [init], once its `onInit` is done. A
+/// failure of either is also reported to the page, which starts a fresh
+/// worker for the next call.
+Future<IsolatedHandler<T, E>> _start<T, E>(
+  IsolatedHandler<T, E> Function(Object? init) create,
+  Object? init,
 ) async {
   try {
-    final result = await run();
+    final handler = create(init);
+    await handler.onInit();
+    return handler;
+  } catch (error, stackTrace) {
+    _self.postMessage(
+        _toJs(_failed, 0, error.toString(), stackTrace: '$stackTrace'));
+    rethrow;
+  }
+}
+
+Future<void> _shutDown(Future<IsolatedHandler<Object?, Object?>> ready) async {
+  try {
+    await (await ready).onDispose();
+  } catch (_) {}
+  _self.postMessage(_toJs(_closed, 0, null));
+}
+
+Future<void> _answer<T, E>(
+  int id,
+  Future<IsolatedHandler<T, E>> ready,
+  Object? payload,
+) async {
+  try {
+    final handler = await ready;
+    final result = await handler.compute(_input(handler, payload) as T);
     try {
       final transfer = <JSArrayBuffer>[];
-      final message =
-          _toJs(_ok, id, result, moved: transferOf(result), transfer: transfer);
+      final message = _toJs(_ok, id, result,
+          moved: handler.transferOf(result), transfer: transfer);
       _self.postMessage(message, transfer.toJS);
       return;
     } catch (error, stackTrace) {
@@ -86,7 +107,8 @@ Future<void> _answer(
 }
 
 final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
-  _WorkerRunner(this._script, Object? init, this._transferOfInput)
+  _WorkerRunner(
+      this._script, Object? init, this._transferOfInput, this._shutdownTimeout)
       : _bootstrap = _wasmBootstrap(_script) {
     try {
       final worker = _worker = switch (_bootstrap) {
@@ -107,6 +129,7 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
 
   final String _script;
   final List<ByteBuffer> Function(T input) _transferOfInput;
+  final Duration _shutdownTimeout;
 
   /// The object URL of a WebAssembly worker's bootstrap module.
   final String? _bootstrap;
@@ -118,6 +141,7 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
 
   /// Whether the worker's script has loaded and runs.
   bool _loaded = false;
+  Timer? _shutdownTimer;
 
   @override
   bool get isDead => _dead;
@@ -149,6 +173,18 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
         _fromJs(event.data) as List<Object?>;
     if (kind == _ready) {
       _loaded = true;
+      return;
+    }
+    if (kind == _closed) {
+      _stop();
+      return;
+    }
+    if (kind == _failed) {
+      if (_killed || _dead) return;
+      _dead = true;
+      _stop();
+      final error = RemoteWorkerError('$payload', remoteStack as String?);
+      _failAll(error, error.stackTrace);
       return;
     }
     final call = _calls.remove(id);
@@ -189,15 +225,17 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
   }
 
   void _stop() {
+    _shutdownTimer?.cancel();
+    _shutdownTimer = null;
     _worker?.terminate();
     if (_bootstrap case final bootstrap?) _URL.revokeObjectURL(bootstrap);
   }
 
-  void _failAll(Object error) {
+  void _failAll(Object error, [StackTrace? stackTrace]) {
     final calls = _calls.values.toList();
     _calls.clear();
     for (final call in calls) {
-      call.completeError(error);
+      call.completeError(error, stackTrace);
     }
   }
 
@@ -205,24 +243,47 @@ final class _WorkerRunner<T, E> implements HandlerRunner<T, E> {
   void kill() {
     if (_killed) return;
     _killed = true;
-    _stop();
     _failAll(
       StateError('Worker was killed while a computation was in progress'),
     );
+    if (_dead) return;
+    if (!_loaded || _shutdownTimeout == Duration.zero) {
+      _stop();
+      return;
+    }
+    try {
+      _worker!.postMessage(_toJs(_shutdown, 0, null));
+    } catch (_) {
+      _stop();
+      return;
+    }
+    _shutdownTimer = Timer(_shutdownTimeout, _stop);
   }
 }
 
 /// Runs the handler on the main thread, each call in its own event-loop
 /// task so that frames can be drawn between calls.
 final class _InPlaceRunner<T, E> implements HandlerRunner<T, E> {
-  _InPlaceRunner(this._handler);
+  _InPlaceRunner(this._handler, this._shutdownTimeout)
+      : _lifecycle = _PageLifecycle.of(_handler) {
+    _ready = _lifecycle.acquire();
+    _ready.then((_) {}, onError: (Object _) {
+      if (_killed) return;
+      _dead = true;
+      _lifecycle.release(dispose: false);
+    });
+  }
 
   final IsolatedHandler<T, E> _handler;
+  final Duration _shutdownTimeout;
+  final _PageLifecycle _lifecycle;
+  late final Future<void> _ready;
   final _calls = <Completer<E>>{};
+  bool _dead = false;
   bool _killed = false;
 
   @override
-  bool get isDead => false;
+  bool get isDead => _dead;
 
   @override
   Future<E> compute(T value) {
@@ -231,7 +292,7 @@ final class _InPlaceRunner<T, E> implements HandlerRunner<T, E> {
     }
     final call = Completer<E>();
     _calls.add(call);
-    Future<E>(() => _handler.compute(value)).then(
+    _ready.then((_) => Future<E>(() => _handler.compute(value))).then(
       (result) {
         if (_calls.remove(call)) call.complete(result);
       },
@@ -253,6 +314,42 @@ final class _InPlaceRunner<T, E> implements HandlerRunner<T, E> {
         StateError('Runner was killed while a computation was in progress'),
       );
     }
+    if (!_dead) {
+      _lifecycle.release(dispose: _shutdownTimeout != Duration.zero);
+    }
+  }
+}
+
+/// A handler's `onInit` and `onDispose` on the main thread, where the
+/// runners of a pool share the one handler: `onInit` runs for the first
+/// runner using it and `onDispose` after the last one stops.
+final class _PageLifecycle {
+  _PageLifecycle(this._handler);
+
+  static final _all = Expando<_PageLifecycle>();
+
+  static _PageLifecycle of(IsolatedHandler<Object?, Object?> handler) =>
+      _all[handler] ??= _PageLifecycle(handler);
+
+  final IsolatedHandler<Object?, Object?> _handler;
+  int _users = 0;
+  Future<void> _ready = Future.value();
+  Future<void> _disposed = Future.value();
+
+  /// Completes when the handler is ready, with `onInit`'s error if it
+  /// failed.
+  Future<void> acquire() {
+    if (_users++ == 0) {
+      _ready = _disposed.then<void>((_) => _handler.onInit())..ignore();
+    }
+    return _ready;
+  }
+
+  void release({required bool dispose}) {
+    if (--_users > 0) return;
+    _disposed = _ready
+        .then<void>((_) => dispose ? _handler.onDispose() : null)
+        .then((_) {}, onError: (Object _) {});
   }
 }
 
@@ -319,6 +416,9 @@ const _call = 1;
 const _ok = 2;
 const _error = 3;
 const _ready = 4;
+const _shutdown = 5;
+const _closed = 6;
+const _failed = 7;
 
 /// Every message, either way: `[kind, id, payload, stackTrace]`. The
 /// buffers of [moved] it holds go to [transfer], to move with it.

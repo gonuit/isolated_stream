@@ -186,6 +186,56 @@ class UnsendableInitHandler extends IsolatedHandler<int, int> {
   IsolatedWebWorker get webWorker => IsolatedWebWorker(script, init: () {});
 }
 
+/// Reports its hooks on a [Reports] channel as `tag:init` and
+/// `tag:dispose`; computes only with what `onInit` made.
+class LifecycleHandler extends IsolatedHandler<int, int> {
+  LifecycleHandler(this.tag, {this.fail = false});
+
+  final String tag;
+
+  /// Whether `onInit` throws.
+  final bool fail;
+  int? _base;
+
+  @override
+  Future<void> onInit() async {
+    reports.postMessage('$tag:init'.toJS);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    if (fail) throw StateError('init failed');
+    _base = 100;
+  }
+
+  @override
+  void onDispose() => reports.postMessage('$tag:dispose'.toJS);
+
+  @override
+  int compute(int value) => value + _base!;
+
+  @override
+  IsolatedWebWorker? get webWorker =>
+      IsolatedWebWorker(script, init: ['lifecycle', tag, fail]);
+}
+
+/// A [LifecycleHandler] on the page.
+class PageLifecycleHandler extends LifecycleHandler {
+  PageLifecycleHandler(super.tag, {super.fail});
+
+  @override
+  IsolatedWebWorker? get webWorker => null;
+}
+
+/// What handlers report from a worker or the page, received by the other
+/// channels of the same name.
+@JS('BroadcastChannel')
+extension type Reports._(JSObject _) implements JSObject {
+  external factory Reports(String name);
+  external void postMessage(JSAny? message);
+  external void close();
+  external set onmessage(JSFunction? handler);
+}
+
+final reports = Reports('isolated_stream_test');
+
 /// Names no worker: runs on the page.
 class PageHandler extends IsolatedHandler<int, int> {
   @override
@@ -212,6 +262,9 @@ IsolatedHandler<dynamic, dynamic> handlerFor(Object? init) {
       return MovingHandler();
     case 'taking':
       return TakingHandler();
+    case 'lifecycle':
+      final [tag as String, fail as bool] = rest;
+      return LifecycleHandler(tag, fail: fail);
     case 'unsendable':
       return UnsendableHandler();
     case 'crashing':
