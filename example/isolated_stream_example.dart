@@ -23,7 +23,7 @@ class AsyncMultiplyHandler extends IsolatedHandler<int, int> {
   final int factor;
 
   AsyncMultiplyHandler(this.factor)
-    : super(debugName: 'AsyncMultiply by $factor');
+      : super(debugName: 'AsyncMultiply by $factor');
 
   @override
   Future<int> compute(int value) async {
